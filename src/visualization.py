@@ -295,7 +295,7 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
         ec_ego.set_zorder(7)
 
     # ── nodes ─────────────────────────────────────────────────────────────────
-    nodes_collection = nx.draw_networkx_nodes(G_ego, pos, ax=ax, node_color=node_colors, node_size=node_sizes, alpha=0.93) 
+    nodes_collection = nx.draw_networkx_nodes(G_ego, pos, ax=ax, node_color=node_colors, node_size=node_sizes, alpha=0.93)
     if nodes_collection is not None:
         nodes_collection.set_zorder(8)
 
