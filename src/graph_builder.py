@@ -22,7 +22,8 @@ except ImportError:
 
 
 def build_facebook_graph(edges_df: pd.DataFrame) -> nx.Graph:
-    G = nx.from_pandas_edgelist(edges_df, source="node1", target="node2", create_using=nx.Graph())
+    G = nx.Graph()
+    G.add_edges_from(zip(edges_df["node1"], edges_df["node2"]))
     nx.set_node_attributes(G, dict(G.degree()), name="degree")
     print(f"  Graph built : {G.number_of_nodes():,} nodes | " f"{G.number_of_edges():,} edges")
     return G
