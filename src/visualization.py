@@ -106,13 +106,7 @@ def plot_synthetic_comparison(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Gra
 
 # ── 4. Ego network graph ───────────────────────────────────────────────────
 
-def plot_ego_network(G_ego: nx.Graph,
-                     ego_node: int,
-                     community_map: Optional[dict] = None,
-                     filename: str = "ego_network.png",
-                     top_hubs_per_comm: int = 2,
-                     max_intra_edges: int = 400,
-                     max_ego_spokes: int = 300) -> str:
+def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dict] = None, filename: str = "ego_network.png", top_hubs_per_comm: int = 2, max_intra_edges: int = 400, max_ego_spokes: int = 300) -> str:
     """
     Sunflower layout — each community is its own clearly separated cluster
     blob orbiting the ego node at the centre.
@@ -121,19 +115,19 @@ def plot_ego_network(G_ego: nx.Graph,
     ------
     * Ego node at (0, 0), drawn large with a glowing ring.
     * Each community occupies a distinct circular blob whose centroid sits on
-      an outer orbit ring.  The centroid angle is evenly spaced so no two
-      communities overlap.
+        an outer orbit ring.  The centroid angle is evenly spaced so no two
+        communities overlap.
     * Within each community blob, nodes are arranged in tight concentric
-      rings (innermost = highest degree).  Blob radius scales with
-      sqrt(community_size) so large communities don't crowd each other.
+        rings (innermost = highest degree).  Blob radius scales with
+        sqrt(community_size) so large communities don't crowd each other.
     * If community_map is None, greedy modularity detection is run on G_ego
-      so the picture always shows meaningful groups.
+        so the picture always shows meaningful groups.
 
     Visual encoding
     ---------------
     * Node size   ∝ degree within G_ego  (hubs are clearly larger)
     * Node colour = community  (tab20 palette)
-    * Ego node    = vivid red, 3× larger than biggest hub
+    * Ego node    = vivid red, 3x larger than biggest hub
     * Background filled circles per community make clusters unmistakable
     * Dashed spokes from ego centroid to each community centroid
     * Intra-community edges drawn as thin coloured lines (sampled if dense)
@@ -264,17 +258,13 @@ def plot_ego_network(G_ego: nx.Graph,
         r_fill   = 1.15 + 0.22 * math.sqrt(m)
 
         # outer glow
-        glow = Circle((cx, cy), r_fill + 0.35,
-                           color=color, alpha=0.06, zorder=1)
+        glow = Circle((cx, cy), r_fill + 0.35, color=color, alpha=0.06, zorder=1)
         ax.add_patch(glow)
         # solid fill
-        blob = Circle((cx, cy), r_fill,
-                           color=color, alpha=0.14, zorder=2)
+        blob = Circle((cx, cy), r_fill, color=color, alpha=0.14, zorder=2)
         ax.add_patch(blob)
         # border ring
-        border = Circle((cx, cy), r_fill,
-                             color=color, alpha=0.55, fill=False,
-                             linewidth=1.2, zorder=3)
+        border = Circle((cx, cy), r_fill, color=color, alpha=0.55, fill=False, linewidth=1.2, zorder=3)
         ax.add_patch(border)
 
         # community label below blob
@@ -305,10 +295,7 @@ def plot_ego_network(G_ego: nx.Graph,
         ec_ego.set_zorder(7)
 
     # ── nodes ─────────────────────────────────────────────────────────────────
-    nodes_collection = nx.draw_networkx_nodes(G_ego, pos, ax=ax,
-                           node_color=node_colors,
-                           node_size=node_sizes,
-                           alpha=0.93)
+    nodes_collection = nx.draw_networkx_nodes(G_ego, pos, ax=ax, node_color=node_colors, node_size=node_sizes, alpha=0.93) 
     if nodes_collection is not None:
         nodes_collection.set_zorder(8)
 
@@ -324,11 +311,7 @@ def plot_ego_network(G_ego: nx.Graph,
     # ── legend ────────────────────────────────────────────────────────────────
     shown   = min(n_comms, 18)
     handles = [
-        Line2D([0], [0], marker="o", color="w",
-                   markerfacecolor=cmap((ordered_groups[i][0] % 20) / 20),
-                   markersize=9,
-                   label=f"C{ordered_groups[i][0]}  "
-                         f"(n={len(ordered_groups[i][1])})")
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap((ordered_groups[i][0] % 20) / 20), markersize=9, label=f"C{ordered_groups[i][0]}  " f"(n={len(ordered_groups[i][1])})")
         for i in range(shown)
     ]
     leg = ax.legend(handles=handles, loc="lower right",
@@ -537,9 +520,7 @@ def plot_community_graph(G: nx.Graph, community_map: dict, max_nodes: int = 1200
         circle = Circle((float(np.mean(xs)), float(np.mean(ys))), r, color=cmap((idx % 20) / 20), alpha=0.07, zorder=0)
         ax.add_patch(circle)
         # community label at centroid
-        ax.text(np.mean(xs), np.mean(ys) + r + 0.2, f"C{cid}  (n={len(members)})",
-                ha="center", va="bottom", fontsize=7,
-                color=cmap((idx % 20) / 20), fontweight="bold")
+        ax.text(np.mean(xs), np.mean(ys) + r + 0.2, f"C{cid}(n={len(members)})", ha="center", va="bottom", fontsize=7, color=cmap((idx % 20) / 20), fontweight="bold")
 
     # edges
     nx.draw_networkx_edges(G, pos, ax=ax, edgelist=inter_edges, alpha=0.06, edge_color="gray", width=0.4)
