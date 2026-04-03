@@ -812,3 +812,124 @@ def plot_similarity_table(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Graph, 
     ax.set_title("Structural Similarity Metrics — Real vs Synthetic Networks", fontsize=13, pad=14)
     plt.tight_layout()
     return _save(fig, filename)
+
+
+# ── 13. Community Size Distribution (Power Law scatter) ───────────────────
+
+def plot_community_size_powerlaw(community_map: dict,
+                                 filename: str = "community_size_powerlaw.png") -> str:
+    """
+    Rank-size (Zipf) scatter plot for community sizes on log-log axes.
+
+    The Facebook graph produces ~13 communities with unique sizes, so a
+    frequency histogram (size vs count) collapses to a row of y=1 points.
+    The rank-size plot is the correct power-law check: rank communities
+    from largest (rank 1) to smallest and plot size on the y-axis.  A
+    straight line on the log-log scale indicates a power law.
+
+    Parameters
+    ----------
+    community_map : dict  node -> community_id.
+    filename      : Output PNG filename.
+    """
+    from collections import Counter
+
+    size_of_comm = Counter(community_map.values())          # comm_id -> size
+    sizes_sorted = np.array(
+        sorted(size_of_comm.values(), reverse=True), dtype=float
+    )
+    ranks = np.arange(1, len(sizes_sorted) + 1, dtype=float)
+
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor="#1a1d27")
+    ax.set_facecolor("#1a1d27")
+
+    ax.scatter(ranks, sizes_sorted, color="#e8793a", s=80, zorder=5,
+               label="Community size")
+
+    # Power-law fit on log-log scale
+    if len(ranks) >= 3:
+        log_r  = np.log10(ranks)
+        log_s  = np.log10(sizes_sorted)
+        coeffs = np.polyfit(log_r, log_s, 1)
+        fit_s  = 10 ** np.polyval(coeffs, log_r)
+        ax.plot(ranks, fit_s, "--", color="#e8793a", alpha=0.55, linewidth=1.5,
+                label=f"Power-law fit (slope ≈ {coeffs[0]:.2f})")
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_title("Community Size Distribution: Power Law",
+                 fontsize=14, color="white", pad=12)
+    ax.set_xlabel("Rank (largest → smallest)", color="white")
+    ax.set_ylabel("Community Size", color="white", labelpad=8)
+    ax.tick_params(colors="white", which="both")
+    for spine in ax.spines.values():
+        spine.set_color("#444")
+    ax.grid(True, linestyle="--", alpha=0.3, color="#888", which="both")
+
+    # Annotate each point with its size
+    for r, s in zip(ranks, sizes_sorted):
+        ax.text(r, s * 1.12, f"{int(s)}", ha="center", va="bottom",
+                fontsize=7.5, color="white", alpha=0.8)
+
+    leg = ax.legend(fontsize=9, facecolor="#2a2d37",
+                    labelcolor="white", edgecolor="#555")
+    plt.tight_layout()
+    return _save(fig, filename)
+
+
+# ── 14. Modularity Curve Analysis ─────────────────────────────────────────
+
+def plot_modularity_curve(G: nx.Graph,
+                          filename: str = "modularity_curve.png",
+                          n_points: int = 40) -> str:
+    """
+    Plot modularity Q vs number of communities for the Facebook network by
+    running greedy modularity communities at varying resolution values.
+
+    Parameters
+    ----------
+    G         : NetworkX graph.
+    filename  : Output PNG filename.
+    n_points  : Number of resolution values to sweep.
+    """
+    from networkx.algorithms.community import greedy_modularity_communities, modularity
+
+    resolutions = np.linspace(0.05, 4.0, n_points)
+    results: list[tuple[int, float]] = []
+
+    for res in resolutions:
+        try:
+            comms = list(greedy_modularity_communities(G, resolution=res))
+            mod   = modularity(G, comms)
+            results.append((len(comms), mod))
+        except Exception:
+            continue
+
+    if not results:
+        print("  [WARN] plot_modularity_curve: no data points computed, skipping.")
+        return ""
+
+    # Sort by number of communities for a clean line
+    results.sort(key=lambda x: x[0])
+    x_vals = [r[0] for r in results]
+    y_vals = [r[1] for r in results]
+
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor="#1a1d27")
+    ax.set_facecolor("#1a1d27")
+
+    ax.fill_between(x_vals, y_vals, alpha=0.30, color="#e8793a")
+    ax.plot(x_vals, y_vals, color="#e8793a", linewidth=2.5)
+
+    ax.set_title("Modularity Curve Analysis: Facebook Network",
+                 fontsize=14, color="white", pad=12)
+    ax.set_xlabel("Number of Communities", color="white")
+    ax.set_ylabel("Modularity Q", color="white", labelpad=8)
+    ax.tick_params(colors="white")
+    for spine in ax.spines.values():
+        spine.set_color("#444")
+    ax.grid(True, linestyle="--", alpha=0.3, color="#888")
+    ax.yaxis.set_label_position("right")
+    ax.yaxis.tick_right()
+
+    plt.tight_layout()
+    return _save(fig, filename)

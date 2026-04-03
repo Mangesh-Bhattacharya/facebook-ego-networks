@@ -9,7 +9,7 @@ Phases
 3. Ego network analysis
 4. Synthetic network comparison (BA vs ER vs Real)
 5. Information diffusion simulation
-6. Visualisations (all saved to figures/)
+6. Visualisations (all saved to figures - Modularity curves, Power Law plots, degree distributions, ego network plots, diffusion spread)
 
 Run
 ---
@@ -32,7 +32,7 @@ from src.metrics           import (global_summary, degree_distribution, top_node
 from src.ego_analysis      import top_ego_candidates, compare_ego_networks
 from src.synthetic_networks import (generate_ba_network, generate_er_network, save_synthetic_edges)
 from src.diffusion         import independent_cascade
-from src.visualization     import (plot_degree_distribution, plot_degree_distribution_loglog, plot_synthetic_comparison, plot_ego_network, plot_diffusion_spread, plot_ego_comparison_heatmap, plot_top_centrality)
+from src.visualization     import (plot_degree_distribution, plot_degree_distribution_loglog, plot_synthetic_comparison, plot_ego_network, plot_diffusion_spread, plot_ego_comparison_heatmap, plot_top_centrality, plot_community_size_powerlaw, plot_modularity_curve)
 
 
 def phase1_clean() -> pd.DataFrame:
@@ -55,7 +55,6 @@ def phase1_clean() -> pd.DataFrame:
     print(f"  Top 5 hubs: {deg_freq.head()['Node'].tolist()}")
     print("  Phase 1 complete.\n")
     return edges
-
 
 def phase2_graph_metrics(edges: pd.DataFrame) -> nx.Graph:
     """Build graph and compute global metrics."""
@@ -89,10 +88,11 @@ def phase2_graph_metrics(edges: pd.DataFrame) -> nx.Graph:
     # Figures
     plot_degree_distribution(G, filename="degree_distribution.png")
     plot_degree_distribution_loglog(G, filename="degree_dist_loglog.png")
+    plot_community_size_powerlaw(community_map, filename="community_size_powerlaw.png")
+    plot_modularity_curve(G, filename="modularity_curve.png")
 
     print("  Phase 2 complete.\n")
     return G
-
 
 def phase3_ego_analysis(G: nx.Graph) -> pd.DataFrame:
     """Analyse top ego networks."""
@@ -118,7 +118,6 @@ def phase3_ego_analysis(G: nx.Graph) -> pd.DataFrame:
 
     print("  Phase 3 complete.\n")
     return ego_df
-
 
 def phase4_synthetic_comparison(G: nx.Graph) -> None:
     """Generate BA and ER synthetic graphs; compare degree distributions."""
@@ -149,7 +148,6 @@ def phase4_synthetic_comparison(G: nx.Graph) -> None:
         print(f"  {label:<6} | nodes={s['nodes']:,} | edges={s['edges']:,} | "f"avg_deg={s['avg_degree']:.2f} | clustering={s['clustering']:.4f}")
 
     print("  Phase 4 complete.\n")
-
 
 def phase5_diffusion(G: nx.Graph) -> None:
     """Run independent cascade diffusion from top hubs."""
@@ -190,7 +188,6 @@ def phase5_diffusion(G: nx.Graph) -> None:
     diff_df.to_csv(os.path.join(DATA_PROCESSED, "diffusion_results.csv"), index=False)
 
     print("  Phase 5 complete.\n")
-
 
 def main():
     print("\n" + "#" * 60)
