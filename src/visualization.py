@@ -6,6 +6,7 @@ Figures are saved to the FIGURES_PATH directory defined in config.py.
 # cspell:ignore zorder colormaps markerfacecolor fontsize linewidth edgecolor facecolor labelcolor markersize
 # cspell:ignore whiskerprops capprops axisbelow suptitle polyfit Gsub fontweight
 # cspell:ignore Assortativity assortativity Jaccard jaccard Barabasi Erdos Renyi
+# cspell:ignore normalised Betweenness parameterised mathrm mathbb binom propto Zipf hdrs axhline boxstyle neighbour
 import os
 import sys
 from typing import Optional
@@ -932,4 +933,178 @@ def plot_modularity_curve(G: nx.Graph,
     ax.yaxis.tick_right()
 
     plt.tight_layout()
+    return _save(fig, filename)
+
+
+# ── 15. Formula Sheet ─────────────────────────────────────────────────────
+
+def plot_formula_sheet(filename: str = "formula_sheet.png") -> str:
+    """
+    Render all mathematical formulas used in the pipeline as a single
+    report-ready figure grouped by analysis phase.
+
+    Sections
+    --------
+    1  Graph Fundamentals
+    2  Centrality Measures
+    3  Community Detection (Greedy Modularity)
+    4  Ego Network Metrics
+    5  Synthetic Network Models
+    6  Information Diffusion (Independent Cascade)
+    7  Power-Law Degree Distribution
+    """
+    # ── section definitions ──────────────────────────────────────────────────
+    # Each entry: (display label, LaTeX formula string, plain-text description)
+    sections = [
+        ("1. Graph Fundamentals", [
+            (r"Average Degree",
+             r"$\langle k \rangle = \dfrac{2m}{n}$",
+             "m = edges, n = nodes"),
+            (r"Graph Density",
+             r"$\rho = \dfrac{2m}{n(n-1)}$",
+             "fraction of possible edges present"),
+            (r"Local Clustering Coefficient",
+             r"$C_v = \dfrac{2\,t_v}{k_v(k_v - 1)}$",
+             r"$t_v$ = triangles through v,  $k_v$ = degree of v"),
+            (r"Average Clustering",
+             r"$\bar{C} = \dfrac{1}{n}\sum_{v} C_v$",
+             "mean over all nodes"),
+            (r"Transitivity (Global Clustering)",
+             r"$T = \dfrac{3 \times \text{triangles}}{\text{connected triples}}$",
+             "ratio of closed to open triplets"),
+        ]),
+        ("2. Centrality Measures", [
+            (r"Degree Centrality",
+             r"$C_D(v) = \dfrac{k_v}{n - 1}$",
+             "normalised degree"),
+            (r"Betweenness Centrality",
+             r"$C_B(v) = \sum_{s \neq v \neq t} \dfrac{\sigma_{st}(v)}{\sigma_{st}}$",
+             r"$\sigma_{st}$ = shortest paths s$\to$t;  $\sigma_{st}(v)$ = those through v"),
+            (r"Closeness Centrality",
+             r"$C_C(v) = \dfrac{n - 1}{\sum_{u \neq v} d(v,\, u)}$",
+             "d(v, u) = shortest-path distance"),
+            (r"Eigenvector Centrality",
+             r"$x_v = \dfrac{1}{\lambda}\sum_{u \in \mathcal{N}(v)} x_u$",
+             r"$\lambda$ = largest eigenvalue of adjacency matrix"),
+        ]),
+        ("3. Community Detection — Greedy Modularity", [
+            (r"Modularity Q",
+             r"$Q = \dfrac{1}{2m}\sum_{ij}\!\left[A_{ij} - \dfrac{k_i k_j}{2m}\right]\delta(c_i, c_j)$",
+             r"$A_{ij}$ = adjacency;  $k_i,k_j$ = degrees;  $\delta$ = 1 if same community"),
+            (r"Resolution-parameterised Q",
+             r"$Q_\gamma = \dfrac{1}{2m}\sum_{ij}\!\left[A_{ij} - \gamma\dfrac{k_i k_j}{2m}\right]\delta(c_i, c_j)$",
+             r"$\gamma > 1$ favours smaller communities;  $\gamma < 1$ favours larger ones"),
+        ]),
+        ("4. Ego Network Metrics", [
+            (r"Effective Size (Burt 1992)",
+             r"$ES = n_a - \dfrac{\sum_{j \in A} k_j^{(A)}}{n_a}$",
+             r"$n_a$ = alters;  $k_j^{(A)}$ = degree of alter j within alter subgraph"),
+            (r"Efficiency",
+             r"$e = \dfrac{ES}{n_a}$",
+             "normalised effective size; ranges in (0, 1]"),
+            (r"Ego Network Density",
+             r"$\rho_{\mathrm{ego}} = \dfrac{2\,m_{\mathrm{ego}}}{n_{\mathrm{ego}}(n_{\mathrm{ego}}-1)}$",
+             "density within the 1-hop ego subgraph"),
+        ]),
+        ("5. Synthetic Network Models", [
+            (r"Barabasi-Albert — Preferential Attachment",
+             r"$\Pi(k_i) = \dfrac{k_i}{\sum_j k_j}$",
+             "probability a new node attaches to node i"),
+            (r"Erdos-Renyi — Random Graph",
+             r"$P(\mathrm{edge}) = p, \quad \mathbb{E}[m] = p\,\dfrac{n(n-1)}{2}$",
+             "each pair connected independently with probability p"),
+            (r"ER Degree Distribution",
+             r"$P(k) = \binom{n-1}{k} p^k (1-p)^{n-1-k}$",
+             "binomial; approximates Poisson for large n"),
+        ]),
+        ("6. Independent Cascade Diffusion", [
+            (r"Activation Probability",
+             r"$P(v \to u) = p$",
+             "newly activated v independently tries each inactive neighbour u"),
+            (r"Spread Fraction at Step t",
+             r"$f_t = \dfrac{|\mathcal{A}_t|}{n}$",
+             r"$\mathcal{A}_t$ = set of all activated nodes after step t"),
+        ]),
+        ("7. Power-Law Degree Distribution", [
+            (r"Power-Law (Scale-Free)",
+             r"$P(k) \propto k^{-\gamma}$",
+             r"$\gamma$ = scaling exponent (typically 2–3 for social networks)"),
+            (r"Log-Log Linear Fit",
+             r"$\log P(k) = -\gamma \log k + c$",
+             "straight line on log-log axes confirms power law"),
+            (r"Rank-Size (Zipf) Law",
+             r"$S_r \propto r^{-\alpha}$",
+             r"$S_r$ = community size at rank r;  straight line on log-log axes"),
+        ]),
+    ]
+
+    # ── layout ───────────────────────────────────────────────────────────────
+    total_formula_rows = sum(len(items) for _, items in sections)
+    total_section_hdrs = len(sections)
+    row_h   = 0.72
+    fig_h   = max(14, (total_formula_rows + total_section_hdrs * 1.4) * row_h + 2.0)
+
+    fig = plt.figure(figsize=(16, fig_h), facecolor="#0f1117")
+    fig.text(0.5, 0.993, "Mathematical Formulas — Facebook Ego-Network Analysis",
+             ha="center", va="top", fontsize=15, color="white", fontweight="bold")
+
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    ax.set_facecolor("#0f1117")
+
+    # column x-positions (as axes fractions)
+    X_LABEL   = 0.02
+    X_FORMULA = 0.28
+    X_NOTE    = 0.62
+
+    y_top    = 0.972
+    usable_h = 0.945
+    row_step = usable_h / (total_formula_rows + total_section_hdrs * 1.4)
+    y_cursor = y_top - 0.022
+
+    # column headers
+    for x, lbl in [(X_LABEL, "Name"), (X_FORMULA, "Formula"), (X_NOTE, "Notes")]:
+        ax.text(x, y_cursor, lbl,
+                ha="left", va="center", fontsize=8.5,
+                color="#e8793a", fontweight="bold",
+                transform=ax.transAxes)
+    y_cursor -= row_step * 0.7
+
+    for sec_title, items in sections:
+        # section divider + header
+        ax.axhline(y_cursor + row_step * 0.25, xmin=0.01, xmax=0.99,
+                   color="#e8793a", linewidth=0.7, alpha=0.55)
+        ax.text(X_LABEL, y_cursor - row_step * 0.15, sec_title,
+                ha="left", va="center", fontsize=10.5,
+                color="#e8793a", fontweight="bold",
+                transform=ax.transAxes)
+        y_cursor -= row_step * 1.4
+
+        for label, formula, note in items:
+            # subtle alternating background stripe
+            rect = matplotlib.patches.FancyBboxPatch(
+                (0.01, y_cursor - row_step * 0.50), 0.98, row_step * 0.90,
+                boxstyle="round,pad=0.003",
+                linewidth=0, facecolor="#1a1d27", alpha=0.6,
+                transform=ax.transAxes, zorder=0,
+            )
+            ax.add_patch(rect)
+
+            ax.text(X_LABEL, y_cursor, label,
+                    ha="left", va="center", fontsize=8.5,
+                    color="#aab0c0", style="italic",
+                    transform=ax.transAxes)
+            ax.text(X_FORMULA, y_cursor, formula,
+                    ha="left", va="center", fontsize=10.5,
+                    color="white",
+                    transform=ax.transAxes)
+            ax.text(X_NOTE, y_cursor, note,
+                    ha="left", va="center", fontsize=8,
+                    color="#7a8499",
+                    transform=ax.transAxes)
+
+            y_cursor -= row_step
+
     return _save(fig, filename)

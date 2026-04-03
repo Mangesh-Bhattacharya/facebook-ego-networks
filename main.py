@@ -32,7 +32,7 @@ from src.metrics           import (global_summary, degree_distribution, top_node
 from src.ego_analysis      import top_ego_candidates, compare_ego_networks
 from src.synthetic_networks import (generate_ba_network, generate_er_network, save_synthetic_edges)
 from src.diffusion         import independent_cascade
-from src.visualization     import (plot_degree_distribution, plot_degree_distribution_loglog, plot_synthetic_comparison, plot_ego_network, plot_diffusion_spread, plot_ego_comparison_heatmap, plot_top_centrality, plot_community_size_powerlaw, plot_modularity_curve)
+from src.visualization     import (plot_degree_distribution, plot_degree_distribution_loglog, plot_synthetic_comparison, plot_ego_network, plot_diffusion_spread, plot_ego_comparison_heatmap, plot_top_centrality, plot_community_size_powerlaw, plot_modularity_curve, plot_formula_sheet)
 
 
 def phase1_clean() -> pd.DataFrame:
@@ -199,6 +199,7 @@ def main():
     ego_df = phase3_ego_analysis(G)
     phase4_synthetic_comparison(G)
     phase5_diffusion(G)
+    plot_formula_sheet(filename="formula_sheet.png")
 
     print("\n" + "#" * 60)
     print(f"  All figures saved to : {FIGURES_PATH}")
