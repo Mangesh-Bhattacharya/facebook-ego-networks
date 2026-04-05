@@ -187,4 +187,4 @@ All paths and constants are in `src/config.py`:
 
 ---
 
-*MITS-AI Sem-2 Complex Networks project, 2025.*
+*MITS-AI Sem-2 Complex Networks project, 2026.*
