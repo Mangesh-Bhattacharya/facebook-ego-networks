@@ -7,6 +7,7 @@ reachable within r hops (alters), and all edges among them.
 """
 import networkx as nx
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 
 def analyze_ego_network(G: nx.Graph, ego_node: int,
@@ -25,7 +26,6 @@ def analyze_ego_network(G: nx.Graph, ego_node: int,
     dict with keys:
         ego_node, radius, n_nodes, n_edges, density,
         avg_clustering, ego_clustering, transitivity,
-        avg_shortest_path, diameter,
         ego_degree, ego_betweenness, ego_closeness,
         n_triangles, effective_size, efficiency
     """
@@ -40,14 +40,6 @@ def analyze_ego_network(G: nx.Graph, ego_node: int,
     # Structural holes (Burt 1992) — only meaningful when ego_net is connected
     betweenness = nx.betweenness_centrality(ego_net)
     closeness   = nx.closeness_centrality(ego_net)
-
-    # Average shortest path and diameter (within ego network)
-    if nx.is_connected(ego_net) and n > 1:
-        avg_sp   = nx.average_shortest_path_length(ego_net)
-        diameter = nx.diameter(ego_net)
-    else:
-        avg_sp   = float("inf")
-        diameter = float("inf")
 
     # Effective size = n_alters - avg redundancy of alters
     alters = list(ego_net.nodes())
@@ -68,8 +60,6 @@ def analyze_ego_network(G: nx.Graph, ego_node: int,
         "avg_clustering":  round(nx.average_clustering(ego_net), 6),
         "ego_clustering":  round(nx.clustering(ego_net, ego_node), 6),
         "transitivity":    round(nx.transitivity(ego_net), 6),
-        "avg_shortest_path": round(avg_sp, 4) if avg_sp != float("inf") else "inf",
-        "diameter":        diameter,
         "ego_degree":      G.degree(ego_node),
         "ego_betweenness": round(betweenness.get(ego_node, 0), 6),
         "ego_closeness":   round(closeness.get(ego_node, 0), 6),
@@ -103,15 +93,18 @@ def compare_ego_networks(G: nx.Graph,
     -------
     pd.DataFrame — one row per ego node.
     """
-    records = []
-    for node in ego_nodes:
+    def _analyze_safe(node):
         try:
-            rec = analyze_ego_network(G, node, radius=radius)
-            records.append(rec)
+            return analyze_ego_network(G, node, radius=radius)
         except ValueError as exc:
             print(f"  Skipping node {node}: {exc}")
-    df = pd.DataFrame(records)
-    return df
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(len(ego_nodes), 4)) as pool:
+        results = list(pool.map(_analyze_safe, ego_nodes))
+
+    records = [r for r in results if r is not None]
+    return pd.DataFrame(records)
 
 
 def run(G: nx.Graph, ego_nodes: list[int] | None = None,

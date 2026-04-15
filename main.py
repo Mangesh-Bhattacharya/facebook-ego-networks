@@ -25,14 +25,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 import networkx as nx
 
-from src.config            import (DATA_RAW, DATA_PROCESSED, FIGURES_PATH, EGO_NODE, BA_M, RANDOM_SEED, DIFFUSION_P)
-from src.cleaning          import clean_facebook_dataset
-from src.graph_builder     import build_facebook_graph, extract_ego_network
-from src.metrics           import (global_summary, degree_distribution, top_nodes_by_centrality, detect_communities_greedy)
-from src.ego_analysis      import top_ego_candidates, compare_ego_networks
+from src.config import (DATA_RAW, DATA_PROCESSED, FIGURES_PATH, BA_M, RANDOM_SEED, DIFFUSION_P)
+from src.cleaning import clean_facebook_dataset
+from src.graph_builder import build_facebook_graph, extract_ego_network
+from src.metrics import (global_summary, degree_distribution, top_nodes_by_centrality, detect_communities_label_propagation)
+from src.ego_analysis import top_ego_candidates, compare_ego_networks
 from src.synthetic_networks import (generate_ba_network, generate_er_network, save_synthetic_edges)
-from src.diffusion         import independent_cascade
-from src.visualization     import (plot_degree_distribution, plot_degree_distribution_loglog, plot_synthetic_comparison, plot_ego_network, plot_diffusion_spread, plot_ego_comparison_heatmap, plot_top_centrality, plot_community_size_powerlaw, plot_modularity_curve, plot_formula_sheet)
+from src.diffusion import independent_cascade
+from src.visualization import (
+    plot_degree_distribution,
+    plot_degree_distribution_loglog,
+    plot_synthetic_comparison,
+    plot_ego_network,
+    plot_diffusion_spread,
+    plot_ego_comparison_heatmap,
+    plot_top_centrality,
+    plot_community_size_powerlaw,
+    plot_modularity_curve,
+    plot_formula_sheet,
+)
 
 
 def phase1_clean() -> pd.DataFrame:
@@ -41,7 +52,8 @@ def phase1_clean() -> pd.DataFrame:
     print("  PHASE 1 — Data Cleaning & Overview")
     print("=" * 60)
     edges = clean_facebook_dataset(raw_path=DATA_RAW, save=True)
-    print(f"  Edges : {len(edges):,}  |  "f"Unique nodes : {pd.concat([edges['node1'], edges['node2']]).nunique():,}")
+    unique_nodes = pd.concat([edges['node1'], edges['node2']]).nunique()
+    print(f"  Edges : {len(edges):,}  |  Unique nodes : {unique_nodes:,}")
 
     # Save degree frequency table
     os.makedirs(DATA_PROCESSED, exist_ok=True)
@@ -80,8 +92,8 @@ def phase2_graph_metrics(edges: pd.DataFrame) -> nx.Graph:
     top.to_csv(os.path.join(DATA_PROCESSED, "top_centrality_nodes.csv"), index=False)
 
     # Community detection
-    print("\n  Community Detection (greedy modularity)...")
-    community_map = detect_communities_greedy(G)
+    print("\n  Community Detection (label propagation)...")
+    community_map = detect_communities_label_propagation(G)
     comm_df = pd.DataFrame(community_map.items(), columns=["node", "community"])
     comm_df.to_csv(os.path.join(DATA_PROCESSED, "communities.csv"), index=False)
 
@@ -145,7 +157,7 @@ def phase4_synthetic_comparison(G: nx.Graph) -> None:
     # Summary comparison
     for label, Gx in [("Real", G), ("BA", G_ba), ("ER", G_er)]:
         s = global_summary(Gx)
-        print(f"  {label:<6} | nodes={s['nodes']:,} | edges={s['edges']:,} | "f"avg_deg={s['avg_degree']:.2f} | clustering={s['clustering']:.4f}")
+        print(f"  {label:<6} | nodes={s['nodes']:,} | edges={s['edges']:,} | avg_deg={s['avg_degree']:.2f} | clustering={s['clustering']:.4f}")
 
     print("  Phase 4 complete.\n")
 
@@ -165,7 +177,7 @@ def phase5_diffusion(G: nx.Graph) -> None:
     activated      = set(seed_nodes)
     newly_activated = set(seed_nodes)
 
-    for step in range(100):
+    for _ in range(100):
         if not newly_activated:
             break
         current_new = set()
@@ -179,7 +191,7 @@ def phase5_diffusion(G: nx.Graph) -> None:
 
     final_fraction = len(activated) / G.number_of_nodes()
     print(f"  Steps to termination : {len(spread_by_step) - 1}")
-    print(f"  Final reach          : {len(activated):,} / {G.number_of_nodes():,} "f"nodes ({final_fraction:.1%})")
+    print(f"  Final reach          : {len(activated):,} / {G.number_of_nodes():,} nodes ({final_fraction:.1%})")
 
     plot_diffusion_spread(spread_by_step, G.number_of_nodes(), filename="diffusion_spread.png")
 
@@ -194,11 +206,14 @@ def main():
     print("  Facebook Ego-Network Analysis Pipeline")
     print("#" * 60)
 
-    edges  = phase1_clean()
-    G      = phase2_graph_metrics(edges)
-    ego_df = phase3_ego_analysis(G)
+    edges = phase1_clean()
+    G     = phase2_graph_metrics(edges)
+
+    # Phases 3, 4, and 5 run sequentially — matplotlib is not thread-safe.
+    phase3_ego_analysis(G)
     phase4_synthetic_comparison(G)
     phase5_diffusion(G)
+
     plot_formula_sheet(filename="formula_sheet.png")
 
     print("\n" + "#" * 60)

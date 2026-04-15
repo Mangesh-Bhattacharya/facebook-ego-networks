@@ -9,20 +9,32 @@ from collections import Counter
 
 # ── Global summary ─────────────────────────────────────────────────────────
 
+def _approximate_diameter(G: nx.Graph, n_samples: int = 10, seed: int = 42) -> int:
+    """
+    Estimate the diameter by running BFS from a small random sample of nodes
+    and returning the maximum eccentricity found.  Much faster than the exact
+    O(V * (V+E)) computation; usually within 1–2 of the true value.
+    """
+    import random as _random
+    rng = _random.Random(seed)
+    nodes = rng.sample(list(G.nodes()), min(n_samples, G.number_of_nodes()))
+    return max(max(nx.single_source_shortest_path_length(G, v).values()) for v in nodes)
+
+
 def global_summary(G: nx.Graph) -> dict:
     """Compute global network summary metrics."""
     n = G.number_of_nodes()
     m = G.number_of_edges()
-    avg_degree  = 2 * m / n if n > 0 else 0
-    clustering  = nx.average_clustering(G)
-    diameter    = nx.diameter(G) if nx.is_connected(G) else float("inf")
+    avg_degree = 2 * m / n if n > 0 else 0
+    clustering = nx.average_clustering(G)
+    diameter   = _approximate_diameter(G) if nx.is_connected(G) else float("inf")
 
     return {
-        "nodes":       n,
-        "edges":       m,
-        "avg_degree":  round(avg_degree, 4),
-        "clustering":  round(clustering, 6),
-        "diameter":    diameter,
+        "nodes":      n,
+        "edges":      m,
+        "avg_degree": round(avg_degree, 4),
+        "clustering": round(clustering, 6),
+        "diameter":   diameter,
     }
 
 

@@ -14,6 +14,18 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")   # non-interactive backend — safe for scripts
 import matplotlib.pyplot as plt
+plt.style.use("default")
+plt.rcParams.update({
+    "figure.facecolor": "white",
+    "axes.facecolor":   "white",
+    "savefig.facecolor": "white",
+    "axes.edgecolor":   "#cccccc",
+    "grid.color":       "#e0e0e0",
+    "text.color":       "#222222",
+    "axes.labelcolor":  "#222222",
+    "xtick.color":      "#222222",
+    "ytick.color":      "#222222",
+})
 import matplotlib.patches
 from matplotlib.patches import Circle
 from matplotlib.lines import Line2D
@@ -183,32 +195,63 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
     cmap    = plt.colormaps["tab20"]
 
     # ── place community blobs on orbit ring ──────────────────────────────────
-    R_orbit      = 9.0     # distance from ego to community centroid
+    NODE_SP = 0.9   # minimum spacing between node centres in a ring
+
+    def _actual_blob_radius(n_nodes: int) -> float:
+        """Simulate ring-filling and return the outermost ring radius."""
+        r = NODE_SP * 0.55
+        remaining = n_nodes
+        while remaining > 0:
+            cap = max(1, int(2 * math.pi * r / NODE_SP))
+            remaining -= cap
+            r += NODE_SP
+        return r + NODE_SP * 0.5  # small outer padding
+
+    # Pre-compute actual blob radii so the orbit can be sized correctly
+    blob_r = {cid: _actual_blob_radius(len(members))
+              for cid, members in ordered_groups}
+
+    # Orbit radius: large enough so the nearest edge of ANY blob is ≥ 3 units
+    # from the ego, AND adjacent blobs don't overlap each other.
+    EGO_GAP   = 3.0   # clearance between ego and blob edge
+    BLOB_GAP  = 2.0   # clearance between neighbouring blobs
+
+    max_br    = max(blob_r.values()) if blob_r else 3.0
+    R_by_ego  = max_br + EGO_GAP
+
+    if n_comms >= 2:
+        # chord between adjacent community centres must be ≥ sum of their radii + gap
+        max_pair  = max(
+            blob_r[ordered_groups[i][0]] + blob_r[ordered_groups[(i + 1) % n_comms][0]]
+            for i in range(n_comms)
+        )
+        chord_needed = max_pair + BLOB_GAP
+        R_by_chord   = chord_needed / (2 * math.sin(math.pi / n_comms))
+    else:
+        R_by_chord = 0.0
+
+    R_orbit      = max(R_by_ego, R_by_chord, 10.0)
     comm_centers = {}
     pos          = {ego_node: (0.0, 0.0)}
 
     for g_idx, (cid, members) in enumerate(ordered_groups):
-        angle           = 2 * math.pi * g_idx / n_comms - math.pi / 2
-        cx              = R_orbit * math.cos(angle)
-        cy              = R_orbit * math.sin(angle)
+        angle             = 2 * math.pi * g_idx / n_comms - math.pi / 2
+        cx                = R_orbit * math.cos(angle)
+        cy                = R_orbit * math.sin(angle)
         comm_centers[cid] = (cx, cy)
 
-        m        = len(members)
-        r_blob   = 1.0 + 0.22 * math.sqrt(m)   # cluster radius grows with size
-
-        # fill concentric rings innermost → outermost
+        # Fill concentric rings from the inside out
         remaining = list(members)
-        ring_r    = r_blob * 0.25
+        ring_r    = NODE_SP * 0.55
         while remaining:
-            # how many nodes fit on this ring at ~0.6-unit spacing
-            cap        = max(1, int(2 * math.pi * ring_r / 0.6))
+            cap        = max(1, int(2 * math.pi * ring_r / NODE_SP))
             ring_nodes = remaining[:cap]
             remaining  = remaining[cap:]
             for k, node in enumerate(ring_nodes):
-                a        = 2 * math.pi * k / max(len(ring_nodes), 1)
+                a         = 2 * math.pi * k / max(len(ring_nodes), 1)
                 pos[node] = (cx + ring_r * math.cos(a),
                              cy + ring_r * math.sin(a))
-            ring_r += 0.65
+            ring_r += NODE_SP
 
     # ── node colours and sizes ───────────────────────────────────────────────
     comm_id_to_gidx = {cid: i for i, (cid, _) in enumerate(ordered_groups)}
@@ -221,7 +264,7 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
         else:
             g_idx = comm_id_to_gidx.get(community_map.get(n, 0), 0)
             node_colors.append(cmap((g_idx % 20) / 20))
-            sz = 35 + 380 * (ego_deg.get(n, 1) / max_deg) ** 0.6
+            sz = 18 + 180 * (ego_deg.get(n, 1) / max_deg) ** 0.6
             node_sizes.append(sz)
 
     # ── edge sets ─────────────────────────────────────────────────────────────
@@ -247,8 +290,10 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
             label_dict[hub] = str(hub)
 
     # ── figure ───────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(18, 18), facecolor="#0f1117")
-    ax.set_facecolor("#0f1117")
+    # Scale figure to the data extent so nothing is clipped or squashed
+    fig_side = max(18, int((R_orbit + max_br + 3) * 1.1))
+    fig, ax = plt.subplots(figsize=(fig_side, fig_side), facecolor="white")
+    ax.set_facecolor("white")
     ax.set_aspect("equal")
 
     # ── community blobs (filled circles) ─────────────────────────────────────
@@ -256,20 +301,20 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
         color    = cmap((g_idx % 20) / 20)
         cx, cy   = comm_centers[cid]
         m        = len(members)
-        r_fill   = 1.15 + 0.22 * math.sqrt(m)
+        r_fill   = blob_r[cid]          # use the actual computed radius
 
         # outer glow
-        glow = Circle((cx, cy), r_fill + 0.35, color=color, alpha=0.06, zorder=1)
+        glow = Circle((cx, cy), r_fill + 0.5, color=color, alpha=0.05, zorder=1)
         ax.add_patch(glow)
         # solid fill
-        blob = Circle((cx, cy), r_fill, color=color, alpha=0.14, zorder=2)
-        ax.add_patch(blob)
+        blob_patch = Circle((cx, cy), r_fill, color=color, alpha=0.10, zorder=2)
+        ax.add_patch(blob_patch)
         # border ring
-        border = Circle((cx, cy), r_fill, color=color, alpha=0.55, fill=False, linewidth=1.2, zorder=3)
+        border = Circle((cx, cy), r_fill, color=color, alpha=0.45, fill=False, linewidth=1.2, zorder=3)
         ax.add_patch(border)
 
         # community label below blob
-        ax.text(cx, cy - r_fill - 0.55,
+        ax.text(cx, cy - r_fill - 0.8,
                 f"Community {cid}  (n={m})",
                 ha="center", va="top", fontsize=8,
                 color=color, fontweight="bold")
@@ -307,7 +352,7 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
                             font_color="white", font_weight="bold")
     alter_labels = {k: v for k, v in label_dict.items() if k != ego_node}
     nx.draw_networkx_labels(G_ego, pos, labels=alter_labels,
-                            ax=ax, font_size=6.5, font_color="white")
+                            ax=ax, font_size=6.5, font_color="#111111")
 
     # ── legend ────────────────────────────────────────────────────────────────
     shown   = min(n_comms, 18)
@@ -318,9 +363,9 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
     leg = ax.legend(handles=handles, loc="lower right",
                     fontsize=8, title="Communities",
                     title_fontsize=9, ncol=2,
-                    framealpha=0.25, facecolor="#1a1d27",
-                    labelcolor="white", edgecolor="#555")
-    leg.get_title().set_color("white")
+                    framealpha=0.85, facecolor="white",
+                    labelcolor="#222222", edgecolor="#cccccc")
+    leg.get_title().set_color("#222222")
 
     # ── title ─────────────────────────────────────────────────────────────────
     n_intra_total = sum(1 for u, v in G_ego.edges()
@@ -330,7 +375,7 @@ def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dic
         f"{n_alters:,} alters  ·  {G_ego.number_of_edges():,} edges  ·  "
         f"{n_comms} communities  ·  "
         f"{len(intra_edges)}/{n_intra_total} intra-alter edges shown",
-        fontsize=14, pad=16, color="white"
+        fontsize=14, pad=16, color="#222222"
     )
     ax.axis("off")
     plt.tight_layout()
@@ -532,7 +577,7 @@ def plot_community_graph(G: nx.Graph, community_map: dict, max_nodes: int = 1200
 
     # hub labels
     nx.draw_networkx_labels(G, pos, labels=label_nodes, ax=ax,
-                            font_size=6, font_color="white",
+                            font_size=6, font_color="#111111",
                             font_weight="bold")
 
     # legend — one swatch per community (cap at 20)
@@ -796,7 +841,7 @@ def plot_similarity_table(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Graph, 
     table.set_fontsize(9)
     table.scale(1, 1.65)
 
-    header_color = "#2c3e50"
+    header_color = "#e8793a"
     for col_idx in range(4):
         cell = table[0, col_idx]
         cell.set_facecolor(header_color)
@@ -841,8 +886,8 @@ def plot_community_size_powerlaw(community_map: dict,
     )
     ranks = np.arange(1, len(sizes_sorted) + 1, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(10, 6), facecolor="#1a1d27")
-    ax.set_facecolor("#1a1d27")
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor="white")
+    ax.set_facecolor("white")
 
     ax.scatter(ranks, sizes_sorted, color="#e8793a", s=80, zorder=5,
                label="Community size")
@@ -859,21 +904,21 @@ def plot_community_size_powerlaw(community_map: dict,
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_title("Community Size Distribution: Power Law",
-                 fontsize=14, color="white", pad=12)
-    ax.set_xlabel("Rank (largest → smallest)", color="white")
-    ax.set_ylabel("Community Size", color="white", labelpad=8)
-    ax.tick_params(colors="white", which="both")
+                 fontsize=14, color="#222222", pad=12)
+    ax.set_xlabel("Rank (largest → smallest)", color="#222222")
+    ax.set_ylabel("Community Size", color="#222222", labelpad=8)
+    ax.tick_params(colors="#222222", which="both")
     for spine in ax.spines.values():
-        spine.set_color("#444")
-    ax.grid(True, linestyle="--", alpha=0.3, color="#888", which="both")
+        spine.set_color("#cccccc")
+    ax.grid(True, linestyle="--", alpha=0.5, color="#e0e0e0", which="both")
 
     # Annotate each point with its size
     for r, s in zip(ranks, sizes_sorted):
         ax.text(r, s * 1.12, f"{int(s)}", ha="center", va="bottom",
-                fontsize=7.5, color="white", alpha=0.8)
+                fontsize=7.5, color="#222222", alpha=0.8)
 
-    leg = ax.legend(fontsize=9, facecolor="#2a2d37",
-                    labelcolor="white", edgecolor="#555")
+    leg = ax.legend(fontsize=9, facecolor="white",
+                    labelcolor="#222222", edgecolor="#cccccc")
     plt.tight_layout()
     return _save(fig, filename)
 
@@ -882,7 +927,7 @@ def plot_community_size_powerlaw(community_map: dict,
 
 def plot_modularity_curve(G: nx.Graph,
                           filename: str = "modularity_curve.png",
-                          n_points: int = 40) -> str:
+                          n_points: int = 12) -> str:
     """
     Plot modularity Q vs number of communities for the Facebook network by
     running greedy modularity communities at varying resolution values.
@@ -915,20 +960,20 @@ def plot_modularity_curve(G: nx.Graph,
     x_vals = [r[0] for r in results]
     y_vals = [r[1] for r in results]
 
-    fig, ax = plt.subplots(figsize=(10, 6), facecolor="#1a1d27")
-    ax.set_facecolor("#1a1d27")
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor="white")
+    ax.set_facecolor("white")
 
     ax.fill_between(x_vals, y_vals, alpha=0.30, color="#e8793a")
     ax.plot(x_vals, y_vals, color="#e8793a", linewidth=2.5)
 
     ax.set_title("Modularity Curve Analysis: Facebook Network",
-                 fontsize=14, color="white", pad=12)
-    ax.set_xlabel("Number of Communities", color="white")
-    ax.set_ylabel("Modularity Q", color="white", labelpad=8)
-    ax.tick_params(colors="white")
+                 fontsize=14, color="#222222", pad=12)
+    ax.set_xlabel("Number of Communities", color="#222222")
+    ax.set_ylabel("Modularity Q", color="#222222", labelpad=8)
+    ax.tick_params(colors="#222222")
     for spine in ax.spines.values():
-        spine.set_color("#444")
-    ax.grid(True, linestyle="--", alpha=0.3, color="#888")
+        spine.set_color("#cccccc")
+    ax.grid(True, linestyle="--", alpha=0.5, color="#e0e0e0")
     ax.yaxis.set_label_position("right")
     ax.yaxis.tick_right()
 
@@ -1041,70 +1086,82 @@ def plot_formula_sheet(filename: str = "formula_sheet.png") -> str:
     # ── layout ───────────────────────────────────────────────────────────────
     total_formula_rows = sum(len(items) for _, items in sections)
     total_section_hdrs = len(sections)
-    row_h   = 0.72
-    fig_h   = max(14, (total_formula_rows + total_section_hdrs * 1.4) * row_h + 2.0)
+    # Each formula row is 1 unit; each section header costs 2 units; title = 2 units
+    UNITS    = total_formula_rows + total_section_hdrs * 2 + 2
+    ROW_IN   = 0.38          # inches per unit
+    fig_h    = max(16, UNITS * ROW_IN + 1.0)
 
-    fig = plt.figure(figsize=(16, fig_h), facecolor="#0f1117")
-    fig.text(0.5, 0.993, "Mathematical Formulas — Facebook Ego-Network Analysis",
-             ha="center", va="top", fontsize=15, color="white", fontweight="bold")
-
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
+    fig, ax = plt.subplots(figsize=(18, fig_h), facecolor="white")
+    ax.set_facecolor("white")
     ax.axis("off")
-    ax.set_facecolor("#0f1117")
 
-    # column x-positions (as axes fractions)
-    X_LABEL   = 0.02
-    X_FORMULA = 0.28
-    X_NOTE    = 0.62
+    # coordinate system: y runs from 0 (bottom) to UNITS (top)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, UNITS)
 
-    y_top    = 0.972
-    usable_h = 0.945
-    row_step = usable_h / (total_formula_rows + total_section_hdrs * 1.4)
-    y_cursor = y_top - 0.022
+    # column x-positions (figure fractions)
+    X_LABEL   = 0.01
+    X_FORMULA = 0.30
+    X_NOTE    = 0.65
+    COL_HDR_Y = UNITS - 0.8
 
-    # column headers
+    # ── main title ────────────────────────────────────────────────────────────
+    ax.text(0.5, UNITS - 0.25,
+            "Mathematical Formulas — Facebook Ego-Network Analysis",
+            ha="center", va="center", fontsize=16, color="#222222",
+            fontweight="bold")
+
+    # ── column headers ────────────────────────────────────────────────────────
     for x, lbl in [(X_LABEL, "Name"), (X_FORMULA, "Formula"), (X_NOTE, "Notes")]:
-        ax.text(x, y_cursor, lbl,
-                ha="left", va="center", fontsize=8.5,
-                color="#e8793a", fontweight="bold",
-                transform=ax.transAxes)
-    y_cursor -= row_step * 0.7
+        ax.text(x, COL_HDR_Y, lbl,
+                ha="left", va="center", fontsize=11,
+                color="#e8793a", fontweight="bold")
 
-    for sec_title, items in sections:
-        # section divider + header
-        ax.axhline(y_cursor + row_step * 0.25, xmin=0.01, xmax=0.99,
-                   color="#e8793a", linewidth=0.7, alpha=0.55)
-        ax.text(X_LABEL, y_cursor - row_step * 0.15, sec_title,
-                ha="left", va="center", fontsize=10.5,
-                color="#e8793a", fontweight="bold",
-                transform=ax.transAxes)
-        y_cursor -= row_step * 1.4
+    # divider under column headers
+    ax.axhline(COL_HDR_Y - 0.45, xmin=0.0, xmax=1.0,
+               color="#e8793a", linewidth=1.2, alpha=0.7)
 
-        for label, formula, note in items:
-            # subtle alternating background stripe
-            rect = matplotlib.patches.FancyBboxPatch(
-                (0.01, y_cursor - row_step * 0.50), 0.98, row_step * 0.90,
-                boxstyle="round,pad=0.003",
-                linewidth=0, facecolor="#1a1d27", alpha=0.6,
-                transform=ax.transAxes, zorder=0,
+    y_cursor = COL_HDR_Y - 1.1   # start below the header divider
+
+    row_colors = ["#f7f7f7", "white"]   # alternating row background
+
+    for sec_idx, (sec_title, items) in enumerate(sections):
+        # ── section header ────────────────────────────────────────────────────
+        sec_bg = matplotlib.patches.FancyBboxPatch(
+            (0.0, y_cursor - 0.35), 1.0, 0.80,
+            boxstyle="square,pad=0",
+            linewidth=0, facecolor="#fff4ec",
+            zorder=0,
+        )
+        ax.add_patch(sec_bg)
+        ax.text(X_LABEL + 0.005, y_cursor + 0.05, sec_title,
+                ha="left", va="center", fontsize=12,
+                color="#c0550a", fontweight="bold")
+        y_cursor -= 1.2
+
+        for row_idx, (label, formula, note) in enumerate(items):
+            # alternating row stripe
+            stripe = matplotlib.patches.FancyBboxPatch(
+                (0.0, y_cursor - 0.45), 1.0, 0.92,
+                boxstyle="square,pad=0",
+                linewidth=0, facecolor=row_colors[row_idx % 2],
+                zorder=0,
             )
-            ax.add_patch(rect)
+            ax.add_patch(stripe)
 
-            ax.text(X_LABEL, y_cursor, label,
-                    ha="left", va="center", fontsize=8.5,
-                    color="#aab0c0", style="italic",
-                    transform=ax.transAxes)
+            ax.text(X_LABEL + 0.005, y_cursor, label,
+                    ha="left", va="center", fontsize=10,
+                    color="#444444", style="italic")
             ax.text(X_FORMULA, y_cursor, formula,
-                    ha="left", va="center", fontsize=10.5,
-                    color="white",
-                    transform=ax.transAxes)
+                    ha="left", va="center", fontsize=12,
+                    color="#111111")
             ax.text(X_NOTE, y_cursor, note,
-                    ha="left", va="center", fontsize=8,
-                    color="#7a8499",
-                    transform=ax.transAxes)
+                    ha="left", va="center", fontsize=9.5,
+                    color="#555555")
 
-            y_cursor -= row_step
+            y_cursor -= 1.0
 
+        y_cursor -= 0.4   # extra gap between sections
+
+    plt.tight_layout(pad=0.3)
     return _save(fig, filename)
