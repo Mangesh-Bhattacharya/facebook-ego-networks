@@ -2,8 +2,6 @@
 
 ## Facebook Ego-Network Analysis Pipeline
 
----
-
 ## Overview
 
 The analysis is implemented as a five-phase Python pipeline (`main.py`) operating on the SNAP Facebook combined ego-network dataset. Each phase is modular and produces intermediate CSV outputs and PNG figures that feed into subsequent phases and the final report.
@@ -20,7 +18,7 @@ Raw CSV  →  Phase 1: Clean  →  Phase 2: Global Metrics  →  Phase 3: Ego An
 **File:** `data/raw/facebook_combined.csv`
 **Format:** Edge list — two tab/space-separated integer node IDs per row, representing undirected friendship connections.
 **Scale:** 4,039 users (nodes), 88,234 friendship pairs (edges).
-**Origin:** Collected from Facebook survey participants. Node IDs are anonymised. The combined file merges 10 individual ego networks into a single connected component.
+**Origin:** Collected from Facebook survey participants. Node IDs are anonymized. The combined file merges 10 individual ego networks into a single connected component.
 
 ---
 
@@ -226,4 +224,4 @@ until new_active is empty or max_steps reached
 
 ---
 
-*Methodology document — MITS-AI Sem-2 Complex Networks project, 2025.*
+*Methodology document — MITS-AI Sem-2 Complex Networks project, 2026.*
