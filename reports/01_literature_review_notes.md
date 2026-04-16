@@ -2,8 +2,6 @@
 
 ## Facebook Ego-Network Analysis
 
----
-
 ## 1. Foundational Dataset
 
 **McAuley, J. & Leskovec, J. (2012). Learning to Discover Social Circles in Ego Networks. NIPS.**
@@ -147,4 +145,4 @@ Relevance: We compute degree, betweenness, closeness, and eigenvector centrality
 
 ---
 
-*Notes compiled for MITS-AI Sem-2 Complex Networks project, 2025.*
+*Notes compiled for MITS-AI Sem-2 Complex Networks project, 2026.*
