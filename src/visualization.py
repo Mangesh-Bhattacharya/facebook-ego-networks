@@ -1,36 +1,33 @@
-"""
-visualization.py
-All plotting functions for the Facebook ego-network project.
-Figures are saved to the FIGURES_PATH directory defined in config.py.
-"""
-# cspell:ignore zorder colormaps markerfacecolor fontsize linewidth edgecolor facecolor labelcolor markersize
-# cspell:ignore whiskerprops capprops axisbelow suptitle polyfit Gsub fontweight
-# cspell:ignore Assortativity assortativity Jaccard jaccard Barabasi Erdos Renyi
-# cspell:ignore normalised Betweenness parameterised mathrm mathbb binom propto Zipf hdrs axhline boxstyle neighbour
+from __future__ import annotations
+
+import math
 import os
+import random
 import sys
-from typing import Optional
-import numpy as np
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — safe for scripts
 import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import pandas as pd
+from matplotlib.lines import Line2D
+from matplotlib.patches import Circle
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Optional
+
+matplotlib.use("Agg")
 plt.style.use("default")
 plt.rcParams.update({
     "figure.facecolor": "white",
-    "axes.facecolor":   "white",
+    "axes.facecolor": "white",
     "savefig.facecolor": "white",
-    "axes.edgecolor":   "#cccccc",
-    "grid.color":       "#e0e0e0",
-    "text.color":       "#222222",
-    "axes.labelcolor":  "#222222",
-    "xtick.color":      "#222222",
-    "ytick.color":      "#222222",
+    "axes.edgecolor": "#cccccc",
+    "grid.color": "#e0e0e0",
+    "text.color": "#222222",
+    "axes.labelcolor": "#222222",
+    "xtick.color": "#222222",
+    "ytick.color": "#222222",
 })
-import matplotlib.patches
-from matplotlib.patches import Circle
-from matplotlib.lines import Line2D
-import networkx as nx
-import pandas as pd
 
 try:
     from .config import FIGURES_PATH
@@ -38,1130 +35,219 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.config import FIGURES_PATH
 
-os.makedirs(FIGURES_PATH, exist_ok=True)
-
-
-# ── Helper ─────────────────────────────────────────────────────────────────
+FIGURES_DIR = Path(FIGURES_PATH)
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
 def _save(fig: plt.Figure, filename: str) -> str:
-    path = os.path.join(FIGURES_PATH, filename)
+    path = FIGURES_DIR / filename
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Saved figure → {path}")
-    return path
+    print(f"Saved → {path}")
+    return str(path)
 
+def _degree_sequence(G: nx.Graph) -> list[int]:
+    return [d for _, d in G.degree()]
 
-# ── 1. Degree Distribution (linear) ───────────────────────────────────────
+def _safe_loglog_fit(xs: np.ndarray, ys: np.ndarray):
+    mask = (xs > 0) & (ys > 0)
+    if mask.sum() < 2:
+        return None
+    log_x = np.log10(xs[mask])
+    log_y = np.log10(ys[mask])
+    slope, intercept = np.polyfit(log_x, log_y, 1)
+    fitted = 10 ** (intercept + slope * np.log10(xs[mask]))
+    return float(-slope), fitted
 
-def plot_degree_distribution(G: nx.Graph, title: str = "Degree Distribution", filename: str = "degree_distribution.png") -> str:
-    degrees = [d for _, d in G.degree()]
+def _greedy_communities_or_single(G: nx.Graph) -> dict:
+    try:
+        from networkx.algorithms.community import greedy_modularity_communities
+        communities = greedy_modularity_communities(G)
+        mapping = {}
+        for cid, comm in enumerate(communities):
+            for node in comm:
+                mapping[node] = cid
+        return mapping
+    except Exception:
+        return {n: 0 for n in G.nodes()}
+
+def plot_degree_distribution(
+    G: nx.Graph,
+    title: str = "Degree Distribution",
+    filename: str = "degree_distribution.png",
+) -> str:
+    degrees = _degree_sequence(G)
+
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.hist(degrees, bins=50, color="steelblue", edgecolor="white", alpha=0.85)
-    ax.set_title(title, fontsize=14)
+    ax.hist(degrees, bins=50, color="steelblue", edgecolor="white")
+    ax.set_title(title)
     ax.set_xlabel("Degree")
     ax.set_ylabel("Number of nodes")
     ax.set_yscale("log")
     return _save(fig, filename)
 
-
-# ── 2. Degree Distribution (log-log, power-law check) ─────────────────────
-
-def plot_degree_distribution_loglog(G: nx.Graph,
-                                    filename: str = "degree_dist_loglog.png") -> str:
-    from collections import Counter
-    deg_count = Counter(d for _, d in G.degree())
-    degrees   = np.array(sorted(deg_count.keys()))
-    counts    = np.array([deg_count[d] for d in degrees])
+def plot_degree_distribution_loglog(
+    G: nx.Graph,
+    filename: str = "degree_dist_loglog.png",
+) -> str:
+    degree_counts = Counter(_degree_sequence(G))
+    degrees = np.array(sorted(degree_counts.keys()), dtype=float)
+    counts = np.array([degree_counts[d] for d in degrees], dtype=float)
 
     fig, ax = plt.subplots(figsize=(7, 5))
-    ax.scatter(degrees, counts, s=20, color="steelblue", alpha=0.7, label="Empirical")
+    ax.scatter(degrees, counts, label="Observed", alpha=0.7)
 
-    # Fit a power-law line on the log-log scale
-    mask = degrees > 0
-    log_x, log_y = np.log10(degrees[mask]), np.log10(counts[mask])
-    coeffs = np.polyfit(log_x, log_y, 1)
-    fit_y  = 10 ** np.polyval(coeffs, log_x)
-    ax.plot(degrees[mask], fit_y, "r--", linewidth=1.5,
-            label=f"Power-law fit (γ ≈ {-coeffs[0]:.2f})")
+    fit = _safe_loglog_fit(degrees, counts)
+    if fit:
+        gamma, fitted = fit
+        mask = (degrees > 0) & (counts > 0)
+        ax.plot(degrees[mask], fitted, "r--", label=f"Fit (γ ≈ {gamma:.2f})")
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title("Degree Distribution (log-log)", fontsize=14)
-    ax.set_xlabel("Degree k")
-    ax.set_ylabel("Count P(k)")
+    ax.set_title("Degree Distribution (log-log)")
+    ax.set_xlabel("Degree")
+    ax.set_ylabel("Count")
     ax.legend()
+
     return _save(fig, filename)
 
-
-# ── 3. Synthetic network comparison ───────────────────────────────────────
-
-def plot_synthetic_comparison(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Graph, filename: str = "synthetic_comparison.png") -> str:
-    """Plot side-by-side degree distribution histograms (linear scale)."""
+def plot_synthetic_comparison(
+    G_real: nx.Graph,
+    G_ba: nx.Graph,
+    G_er: nx.Graph,
+    filename: str = "synthetic_comparison.png",
+) -> str:
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-    for ax, G, label, color in zip(
-        axes,
-        [G_real, G_ba, G_er],
-        ["Real (Facebook)", "Barabasi-Albert", "Erdos-Renyi"],
-        ["steelblue", "darkorange", "seagreen"],
-    ):
-        degrees = [d for _, d in G.degree()]
-        ax.hist(degrees, bins=30, color=color, edgecolor="white", alpha=0.85)
-        ax.set_title(f"{label}\n(n={G.number_of_nodes():,})", fontsize=11)
-        ax.set_xlabel("Degree")
-        ax.set_ylabel("Frequency")
+    configs = [
+        (G_real, "Real", "steelblue"),
+        (G_ba, "Barabasi-Albert", "orange"),
+        (G_er, "Erdos-Renyi", "green"),
+    ]
+    for ax, (G, title, color) in zip(axes, configs):
+        ax.hist(_degree_sequence(G), bins=30, color=color)
+        ax.set_title(title)
         ax.set_yscale("log")
 
-    fig.suptitle("Degree Distribution Comparison", fontsize=13, y=1.02)
-    plt.tight_layout()
     return _save(fig, filename)
 
+def plot_ego_network(
+    G_ego: nx.Graph,
+    ego_node: int,
+    community_map: Optional[dict] = None,
+    filename: str = "ego_network.png",
+) -> str:
+    if ego_node not in G_ego:
+        raise ValueError("Ego node not in graph")
 
-# ── 4. Ego network graph ───────────────────────────────────────────────────
-
-def plot_ego_network(G_ego: nx.Graph, ego_node: int, community_map: Optional[dict] = None, filename: str = "ego_network.png", top_hubs_per_comm: int = 2, max_intra_edges: int = 400, max_ego_spokes: int = 300) -> str:
-    """
-    Sunflower layout — each community is its own clearly separated cluster
-    blob orbiting the ego node at the centre.
-
-    Layout
-    ------
-    * Ego node at (0, 0), drawn large with a glowing ring.
-    * Each community occupies a distinct circular blob whose centroid sits on
-        an outer orbit ring.  The centroid angle is evenly spaced so no two
-        communities overlap.
-    * Within each community blob, nodes are arranged in tight concentric
-        rings (innermost = highest degree).  Blob radius scales with
-        sqrt(community_size) so large communities don't crowd each other.
-    * If community_map is None, greedy modularity detection is run on G_ego
-        so the picture always shows meaningful groups.
-
-    Visual encoding
-    ---------------
-    * Node size   ∝ degree within G_ego  (hubs are clearly larger)
-    * Node colour = community  (tab20 palette)
-    * Ego node    = vivid red, 3x larger than biggest hub
-    * Background filled circles per community make clusters unmistakable
-    * Dashed spokes from ego centroid to each community centroid
-    * Intra-community edges drawn as thin coloured lines (sampled if dense)
-    * Ego-to-alter edges drawn as faint red lines (sampled if > max_ego_spokes)
-    * Top 2 hubs per community are labelled in white
-    * Legend lists every community with its node count
-
-    Parameters
-    ----------
-    G_ego              : Ego-network subgraph (ego node included).
-    ego_node           : ID of the central node.
-    community_map      : Optional dict  node -> community_id.
-    filename           : Output PNG filename.
-    top_hubs_per_comm  : Hub labels shown per community.
-    max_intra_edges    : Cap on intra-community edges drawn per community.
-    max_ego_spokes     : Cap on ego→alter lines drawn.
-    """
-    import math
-    import random
-    from collections import defaultdict
-
-    random.seed(42)
-    alters  = [n for n in G_ego.nodes() if n != ego_node]
-    n_alters = len(alters)
-
-    # ── auto community detection if none provided ────────────────────────────
     if community_map is None:
-        try:
-            from networkx.algorithms.community import greedy_modularity_communities
-            raw = greedy_modularity_communities(G_ego)
-            community_map = {}
-            for cid, comm in enumerate(raw):
-                for node in comm:
-                    community_map[node] = cid
-        except Exception:
-            community_map = {n: 0 for n in G_ego.nodes()}
+        community_map = _greedy_communities_or_single(G_ego)
 
-    # ── degree within ego network ────────────────────────────────────────────
-    ego_deg = dict(G_ego.degree())
-    max_deg = max((ego_deg[n] for n in alters), default=1)
+    pos = nx.spring_layout(G_ego, seed=42)
+    colors = [community_map.get(n, 0) for n in G_ego.nodes()]
+    sizes = [300 if n == ego_node else 50 for n in G_ego.nodes()]
 
-    # ── group alters into communities ────────────────────────────────────────
-    groups: dict = defaultdict(list)
-    for n in alters:
-        groups[community_map.get(n, 0)].append(n)
-    # sort largest community first; within each group sort by degree desc
-    ordered_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
-    for _, members in ordered_groups:
-        members.sort(key=lambda n: ego_deg.get(n, 0), reverse=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    nx.draw(G_ego, pos, node_color=colors, node_size=sizes, with_labels=False, ax=ax)
 
-    n_comms = len(ordered_groups)
-    cmap    = plt.colormaps["tab20"]
-
-    # ── place community blobs on orbit ring ──────────────────────────────────
-    NODE_SP = 0.9   # minimum spacing between node centres in a ring
-
-    def _actual_blob_radius(n_nodes: int) -> float:
-        """Simulate ring-filling and return the outermost ring radius."""
-        r = NODE_SP * 0.55
-        remaining = n_nodes
-        while remaining > 0:
-            cap = max(1, int(2 * math.pi * r / NODE_SP))
-            remaining -= cap
-            r += NODE_SP
-        return r + NODE_SP * 0.5  # small outer padding
-
-    # Pre-compute actual blob radii so the orbit can be sized correctly
-    blob_r = {cid: _actual_blob_radius(len(members))
-              for cid, members in ordered_groups}
-
-    # Orbit radius: large enough so the nearest edge of ANY blob is ≥ 3 units
-    # from the ego, AND adjacent blobs don't overlap each other.
-    EGO_GAP   = 3.0   # clearance between ego and blob edge
-    BLOB_GAP  = 2.0   # clearance between neighbouring blobs
-
-    max_br    = max(blob_r.values()) if blob_r else 3.0
-    R_by_ego  = max_br + EGO_GAP
-
-    if n_comms >= 2:
-        # chord between adjacent community centres must be ≥ sum of their radii + gap
-        max_pair  = max(
-            blob_r[ordered_groups[i][0]] + blob_r[ordered_groups[(i + 1) % n_comms][0]]
-            for i in range(n_comms)
-        )
-        chord_needed = max_pair + BLOB_GAP
-        R_by_chord   = chord_needed / (2 * math.sin(math.pi / n_comms))
-    else:
-        R_by_chord = 0.0
-
-    R_orbit      = max(R_by_ego, R_by_chord, 10.0)
-    comm_centers = {}
-    pos          = {ego_node: (0.0, 0.0)}
-
-    for g_idx, (cid, members) in enumerate(ordered_groups):
-        angle             = 2 * math.pi * g_idx / n_comms - math.pi / 2
-        cx                = R_orbit * math.cos(angle)
-        cy                = R_orbit * math.sin(angle)
-        comm_centers[cid] = (cx, cy)
-
-        # Fill concentric rings from the inside out
-        remaining = list(members)
-        ring_r    = NODE_SP * 0.55
-        while remaining:
-            cap        = max(1, int(2 * math.pi * ring_r / NODE_SP))
-            ring_nodes = remaining[:cap]
-            remaining  = remaining[cap:]
-            for k, node in enumerate(ring_nodes):
-                a         = 2 * math.pi * k / max(len(ring_nodes), 1)
-                pos[node] = (cx + ring_r * math.cos(a),
-                             cy + ring_r * math.sin(a))
-            ring_r += NODE_SP
-
-    # ── node colours and sizes ───────────────────────────────────────────────
-    comm_id_to_gidx = {cid: i for i, (cid, _) in enumerate(ordered_groups)}
-    node_colors, node_sizes = [], []
-
-    for n in G_ego.nodes():
-        if n == ego_node:
-            node_colors.append("#e74c3c")
-            node_sizes.append(2200)
-        else:
-            g_idx = comm_id_to_gidx.get(community_map.get(n, 0), 0)
-            node_colors.append(cmap((g_idx % 20) / 20))
-            sz = 18 + 180 * (ego_deg.get(n, 1) / max_deg) ** 0.6
-            node_sizes.append(sz)
-
-    # ── edge sets ─────────────────────────────────────────────────────────────
-    # ego spokes
-    ego_edges = [(ego_node, v) for v in alters if G_ego.has_edge(ego_node, v)]
-    if len(ego_edges) > max_ego_spokes:
-        ego_edges = random.sample(ego_edges, max_ego_spokes)
-
-    # intra-community edges (per community to avoid large-community domination)
-    intra_edges = []
-    for cid, members in ordered_groups:
-        comm_set = set(members)
-        c_edges  = [(u, v) for u, v in G_ego.edges()
-                    if u in comm_set and v in comm_set]
-        if len(c_edges) > max_intra_edges:
-            c_edges = random.sample(c_edges, max_intra_edges)
-        intra_edges.extend(c_edges)
-
-    # ── hub labels ───────────────────────────────────────────────────────────
-    label_dict = {ego_node: str(ego_node)}
-    for cid, members in ordered_groups:
-        for hub in members[:top_hubs_per_comm]:
-            label_dict[hub] = str(hub)
-
-    # ── figure ───────────────────────────────────────────────────────────────
-    # Scale figure to the data extent so nothing is clipped or squashed
-    fig_side = max(18, int((R_orbit + max_br + 3) * 1.1))
-    fig, ax = plt.subplots(figsize=(fig_side, fig_side), facecolor="white")
-    ax.set_facecolor("white")
-    ax.set_aspect("equal")
-
-    # ── community blobs (filled circles) ─────────────────────────────────────
-    for g_idx, (cid, members) in enumerate(ordered_groups):
-        color    = cmap((g_idx % 20) / 20)
-        cx, cy   = comm_centers[cid]
-        m        = len(members)
-        r_fill   = blob_r[cid]          # use the actual computed radius
-
-        # outer glow
-        glow = Circle((cx, cy), r_fill + 0.5, color=color, alpha=0.05, zorder=1)
-        ax.add_patch(glow)
-        # solid fill
-        blob_patch = Circle((cx, cy), r_fill, color=color, alpha=0.10, zorder=2)
-        ax.add_patch(blob_patch)
-        # border ring
-        border = Circle((cx, cy), r_fill, color=color, alpha=0.45, fill=False, linewidth=1.2, zorder=3)
-        ax.add_patch(border)
-
-        # community label below blob
-        ax.text(cx, cy - r_fill - 0.8,
-                f"Community {cid}  (n={m})",
-                ha="center", va="top", fontsize=8,
-                color=color, fontweight="bold")
-
-    # ── spoke lines ego → community centroid ─────────────────────────────────
-    for g_idx, (cid, _) in enumerate(ordered_groups):
-        color  = cmap((g_idx % 20) / 20)
-        cx, cy = comm_centers[cid]
-        ax.plot([0, cx], [0, cy],
-                color=color, alpha=0.22, lw=1.0,
-                linestyle="--", zorder=4)
-
-    # ── ego glow ring ─────────────────────────────────────────────────────────
-    for r, a in [(1.0, 0.06), (0.65, 0.12), (0.38, 0.20)]:
-        ax.add_patch(Circle((0, 0), r, color="#e74c3c",
-                                alpha=a, zorder=5, fill=True))
-
-    # ── edges ─────────────────────────────────────────────────────────────────
-    ec_intra = nx.draw_networkx_edges(G_ego, pos, edgelist=intra_edges, ax=ax, alpha=0.18, edge_color="#95a5a6", width=0.5)
-    if ec_intra is not None:
-        ec_intra.set_zorder(6)
-    ec_ego = nx.draw_networkx_edges(G_ego, pos, edgelist=ego_edges, ax=ax, alpha=0.12, edge_color="#e74c3c", width=0.5)
-    if ec_ego is not None:
-        ec_ego.set_zorder(7)
-
-    # ── nodes ─────────────────────────────────────────────────────────────────
-    nodes_collection = nx.draw_networkx_nodes(G_ego, pos, ax=ax, node_color=node_colors, node_size=node_sizes, alpha=0.93)
-    if nodes_collection is not None:
-        nodes_collection.set_zorder(8)
-
-    # ── labels ────────────────────────────────────────────────────────────────
-    nx.draw_networkx_labels(G_ego, pos,
-                            labels={ego_node: str(ego_node)},
-                            ax=ax, font_size=11,
-                            font_color="white", font_weight="bold")
-    alter_labels = {k: v for k, v in label_dict.items() if k != ego_node}
-    nx.draw_networkx_labels(G_ego, pos, labels=alter_labels,
-                            ax=ax, font_size=6.5, font_color="#111111")
-
-    # ── legend ────────────────────────────────────────────────────────────────
-    shown   = min(n_comms, 18)
-    handles = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap((ordered_groups[i][0] % 20) / 20), markersize=9, label=f"C{ordered_groups[i][0]}  " f"(n={len(ordered_groups[i][1])})")
-        for i in range(shown)
-    ]
-    leg = ax.legend(handles=handles, loc="lower right",
-                    fontsize=8, title="Communities",
-                    title_fontsize=9, ncol=2,
-                    framealpha=0.85, facecolor="white",
-                    labelcolor="#222222", edgecolor="#cccccc")
-    leg.get_title().set_color("#222222")
-
-    # ── title ─────────────────────────────────────────────────────────────────
-    n_intra_total = sum(1 for u, v in G_ego.edges()
-                        if u != ego_node and v != ego_node)
-    ax.set_title(
-        f"Ego Network — Node {ego_node}\n"
-        f"{n_alters:,} alters  ·  {G_ego.number_of_edges():,} edges  ·  "
-        f"{n_comms} communities  ·  "
-        f"{len(intra_edges)}/{n_intra_total} intra-alter edges shown",
-        fontsize=14, pad=16, color="#222222"
-    )
-    ax.axis("off")
-    plt.tight_layout()
     return _save(fig, filename)
 
-
-# ── 5. Centrality comparison bar chart ────────────────────────────────────
-
-def plot_top_centrality(df_centrality: pd.DataFrame,
-                        col: str = "betweenness_centrality",
-                        k: int = 15,
-                        filename: Optional[str] = None) -> str:
-    top = df_centrality.nlargest(k, col)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.barh(top["node"].astype(str), top[col], color="steelblue")
-    ax.invert_yaxis()
-    ax.set_xlabel(col.replace("_", " ").title())
-    ax.set_title(f"Top-{k} Nodes by {col.replace('_', ' ').title()}", fontsize=13)
-    if filename is None:
-        filename = f"top_{col}.png"
-    return _save(fig, filename)
-
-
-# ── 6. Diffusion spread curve ──────────────────────────────────────────────
-
-def plot_diffusion_spread(spread_by_step: list[int], n_total: int, filename: str = "diffusion_spread.png") -> str:
-    """
-    Plot the fraction of nodes activated at each diffusion step.
-
-    Parameters
-    ----------
-    spread_by_step : List where index = step, value = cumulative activated count.
-    n_total        : Total nodes in the graph.
-    """
-    steps     = list(range(len(spread_by_step)))
-    fractions = [s / n_total for s in spread_by_step]
+def plot_top_centrality(
+    df: pd.DataFrame,
+    col: str,
+    k: int = 10,
+    filename: str = "centrality.png",
+) -> str:
+    top = df.nlargest(k, col)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(steps, fractions, marker="o", color="tomato", linewidth=2, markersize=5)
-    ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="Full coverage")
-    ax.set_xlabel("Diffusion step")
-    ax.set_ylabel("Fraction of nodes activated")
-    ax.set_title("Independent Cascade — Spread over Time", fontsize=13)
-    ax.set_ylim(0, 1.05)
-    ax.legend()
+    ax.barh(top["node"].astype(str), top[col])
+    ax.invert_yaxis()
+    ax.set_title(f"Top {k} by {col}")
+
     return _save(fig, filename)
 
 
-# ── 7. Multi-ego comparison heatmap ───────────────────────────────────────
+def plot_diffusion_spread(
+    spread: list[int],
+    total: int,
+    filename: str = "diffusion.png",
+) -> str:
+    steps = range(len(spread))
+    fractions = [s / total for s in spread]
 
-def plot_ego_comparison_heatmap(ego_df: pd.DataFrame,
-                                filename: str = "ego_heatmap.png") -> str:
-    """
-    Heatmap of normalised ego-network metrics for easy comparison.
+    fig, ax = plt.subplots()
+    ax.plot(steps, fractions, marker="o")
+    ax.set_ylim(0, 1)
+    ax.set_title("Diffusion over time")
 
-    Parameters
-    ----------
-    ego_df : DataFrame returned by ego_analysis.compare_ego_networks().
-    """
-    numeric_cols = ["n_nodes", "n_edges", "density", "avg_clustering",
-                    "ego_degree", "effective_size", "efficiency"]
-    available    = [c for c in numeric_cols if c in ego_df.columns]
-    data         = ego_df[["ego_node"] + available].set_index("ego_node")
-
-    # Normalise each column to [0, 1]
-    normed = (data - data.min()) / (data.max() - data.min()).replace(0, 1)
-
-    fig, ax = plt.subplots(figsize=(max(8, len(available) * 1.2),
-                                    max(4, len(normed) * 0.5)))
-    im = ax.imshow(normed.values, aspect="auto", cmap="YlOrRd")
-    plt.colorbar(im, ax=ax, label="Normalised value")
-
-    ax.set_xticks(range(len(available)))
-    ax.set_xticklabels([c.replace("_", "\n") for c in available], fontsize=9)
-    ax.set_yticks(range(len(normed)))
-    ax.set_yticklabels([f"Node {idx}" for idx in normed.index], fontsize=9)
-    ax.set_title("Ego Network Metrics — Normalised Comparison", fontsize=13)
-
-    # Annotate cells with raw values
-    for i in range(len(normed)):
-        for j in range(len(available)):
-            raw_val = data.values[i, j]
-            text    = f"{raw_val:.2f}" if isinstance(raw_val, float) else str(raw_val)
-            ax.text(j, i, text, ha="center", va="center", fontsize=7,
-                    color="black" if normed.values[i, j] < 0.6 else "white")
-
-    plt.tight_layout()
     return _save(fig, filename)
 
+def plot_community_sizes(
+    community_map: dict,
+    filename: str = "community_sizes.png",
+) -> str:
+    counts = Counter(community_map.values())
 
-# ── 8. Greedy Modularity — community-aware layout, proportional node sizes ─
-
-def plot_community_graph(G: nx.Graph, community_map: dict, max_nodes: int = 1200, top_hubs_per_comm: int = 2, filename: str = "community_graph.png") -> str:
-    """
-    Draw the graph with a community-aware layout so each cluster is visually
-    separated.  Node sizes are proportional to degree so hubs stand out.
-    Top hub nodes in each community are labelled.
-
-    Layout strategy
-    ---------------
-    1. Place community centroids on a circle (well separated).
-    2. Within each community, distribute nodes in a small circle around
-        their centroid — no community overlaps with its neighbour.
-    3. Node area ∝ degree  (sqrt scaling keeps very high-degree hubs readable).
-    4. Intra-community edges are drawn lightly; inter-community edges are
-        drawn even more faintly so the cluster structure is obvious.
-
-    Parameters
-    ----------
-    G                  : Full NetworkX graph.
-    community_map      : dict  node -> community_id
-    max_nodes          : Subsample cap for speed / readability.
-    top_hubs_per_comm  : How many hub nodes per community to label.
-    filename           : Output PNG filename.
-    """
-    from collections import defaultdict
-    import math
-
-    # ── subsample if needed ──────────────────────────────────────────────────
-    if G.number_of_nodes() > max_nodes:
-        # keep the highest-degree nodes so structure is preserved
-        top_nodes = sorted(G.nodes(), key=lambda n: G.degree(n), reverse=True)
-        G = G.subgraph(top_nodes[:max_nodes]).copy()
-
-    # ── community bookkeeping ────────────────────────────────────────────────
-    comm_members = defaultdict(list)
-    for node in G.nodes():
-        comm_members[community_map.get(node, 0)].append(node)
-
-    comm_ids   = sorted(comm_members.keys(),
-                        key=lambda c: len(comm_members[c]), reverse=True)
-    n_comms    = len(comm_ids)
-    cmap       = plt.colormaps["tab20"]
-
-    # ── build positions ──────────────────────────────────────────────────────
-    pos           = {}
-    centroid_pos  = {}
-    R_outer       = 10.0          # radius of the ring of community centres
-    r_inner_base  = 2.0           # base inner-cluster radius
-    scale_inner   = 0.55          # shrink large communities slightly
-
-    for idx, cid in enumerate(comm_ids):
-        angle    = 2 * math.pi * idx / n_comms
-        cx, cy   = R_outer * math.cos(angle), R_outer * math.sin(angle)
-        centroid_pos[cid] = (cx, cy)
-
-        members  = comm_members[cid]
-        m        = len(members)
-        r_inner  = r_inner_base + scale_inner * math.sqrt(m)
-
-        for k, node in enumerate(members):
-            a = 2 * math.pi * k / max(m, 1)
-            pos[node] = (cx + r_inner * math.cos(a),
-                         cy + r_inner * math.sin(a))
-
-    # ── node sizes proportional to degree ────────────────────────────────────
-    degrees    = dict(G.degree())
-    max_deg    = max(degrees.values()) if degrees else 1
-    node_sizes = [30 + 600 * (degrees[n] / max_deg) ** 0.6
-                    for n in G.nodes()]
-
-    # ── colours ──────────────────────────────────────────────────────────────
-    node_colors = [cmap((community_map.get(n, 0) % 20) / 20) for n in G.nodes()]
-
-    # ── classify edges ────────────────────────────────────────────────────────
-    intra_edges = [(u, v) for u, v in G.edges() if community_map.get(u) == community_map.get(v)]
-    inter_edges = [(u, v) for u, v in G.edges() if community_map.get(u) != community_map.get(v)]
-
-    # ── hub labels: top-N by degree in each community ────────────────────────
-    label_nodes = {}
-    for cid in comm_ids:
-        members_in_G = [n for n in comm_members[cid] if n in G]
-        hubs = sorted(members_in_G, key=lambda n: degrees.get(n, 0), reverse=True)
-        for hub in hubs[:top_hubs_per_comm]:
-            label_nodes[hub] = str(hub)
-
-    # ── draw ──────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(16, 14))
-
-    # community halos
-    for idx, cid in enumerate(comm_ids):
-        members = [n for n in comm_members[cid] if n in pos]
-        if not members:
-            continue
-        xs = [pos[n][0] for n in members]
-        ys = [pos[n][1] for n in members]
-        r  = max(math.dist([np.mean(xs), np.mean(ys)], [pos[n][0], pos[n][1]]) for n in members) + 0.6
-        circle = Circle((float(np.mean(xs)), float(np.mean(ys))), r, color=cmap((idx % 20) / 20), alpha=0.07, zorder=0)
-        ax.add_patch(circle)
-        # community label at centroid
-        ax.text(np.mean(xs), np.mean(ys) + r + 0.2, f"C{cid}(n={len(members)})", ha="center", va="bottom", fontsize=7, color=cmap((idx % 20) / 20), fontweight="bold")
-
-    # edges
-    nx.draw_networkx_edges(G, pos, ax=ax, edgelist=inter_edges, alpha=0.06, edge_color="gray", width=0.4)
-    nx.draw_networkx_edges(G, pos, ax=ax, edgelist=intra_edges, alpha=0.25, edge_color="gray", width=0.6)
-
-    # nodes
-    nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors, node_size=node_sizes, alpha=0.9)
-
-    # hub labels
-    nx.draw_networkx_labels(G, pos, labels=label_nodes, ax=ax,
-                            font_size=6, font_color="#111111",
-                            font_weight="bold")
-
-    # legend — one swatch per community (cap at 20)
-    shown   = min(n_comms, 20)
-    handles = [Line2D([0], [0], marker="o", color="w", markerfacecolor=cmap((comm_ids[i] % 20) / 20), markersize=8, label=f"C{comm_ids[i]} (n={len(comm_members[comm_ids[i]])})")
-        for i in range(shown)
-    ]
-    ax.legend(handles=handles, loc="lower right", fontsize=7, title=f"Top-{shown} communities by size", title_fontsize=8, ncol=max(1, shown // 8), framealpha=0.6)
-
-    ax.set_title(
-        f"Greedy Modularity Communities — {n_comms} communities | "
-        f"{G.number_of_nodes()} nodes shown\n"
-        f"Node size ∝ degree  •  Labelled nodes = top hubs per community",
-        fontsize=13
-    )
-    ax.axis("equal")
-    ax.axis("off")
-    plt.tight_layout()
-    return _save(fig, filename)
-
-
-# ── 9. Community size distribution ────────────────────────────────────────
-
-def plot_community_sizes(community_map: dict, filename: str = "community_sizes.png") -> str:
-    """
-    Bar chart of community sizes sorted in descending order.
-
-    Parameters
-    ----------
-    community_map : dict mapping node -> community_id.
-    """
-    from collections import Counter
-    counts   = Counter(community_map.values())
-    sorted_c = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-    comm_ids = [str(c) for c, _ in sorted_c]
-    sizes    = [s for _, s in sorted_c]
-
-    fig, ax = plt.subplots(figsize=(max(10, len(sizes) * 0.4), 5))
-    bars = ax.bar(comm_ids, sizes, color="steelblue", edgecolor="white", alpha=0.85)
-
-    for bar, size in zip(bars, sizes):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                str(size), ha="center", va="bottom", fontsize=7)
-
-    ax.set_xlabel("Community ID")
-    ax.set_ylabel("Number of nodes")
-    ax.set_title(f"Community Size Distribution " f"({len(counts)} communities, {sum(sizes)} nodes total)", fontsize=13)
+    fig, ax = plt.subplots()
+    ax.bar(counts.keys(), counts.values())
     ax.set_yscale("log")
-    if len(sizes) > 30:
-        ax.set_xticks([])
-        ax.set_xlabel("Communities (sorted by size, largest first)")
-    plt.tight_layout()
+
     return _save(fig, filename)
 
-
-# ── 10. Inter-community edge density heatmap ──────────────────────────────
-
-def plot_community_matrix(G: nx.Graph, community_map: dict, top_k: int = 15, filename: str = "community_matrix.png") -> str:
-    """
-    Heatmap of edge density between the `top_k` largest communities.
-    Cell (i, j) = edges(Ci, Cj) / (|Ci| * |Cj|)   for i != j
-                = 2*intra_edges / (|Ci|*(|Ci|-1))  for i == j
-
-    Parameters
-    ----------
-    G             : The full NetworkX graph.
-    community_map : dict mapping node -> community_id.
-    top_k         : Only show the top_k largest communities.
-    """
-    from collections import Counter, defaultdict
-
-    size_by_comm = Counter(community_map.values())
-    top_comms    = [c for c, _ in size_by_comm.most_common(top_k)]
-    comm_index   = {c: i for i, c in enumerate(top_comms)}
-    k            = len(top_comms)
-
-    edge_counts = defaultdict(int)
-    for u, v in G.edges():
-        cu = community_map.get(u)
-        cv = community_map.get(v)
-        if cu in comm_index and cv in comm_index:
-            i, j = comm_index[cu], comm_index[cv]
-            edge_counts[(min(i, j), max(i, j))] += 1
-
-    matrix = np.zeros((k, k))
-    for (i, j), count in edge_counts.items():
-        si = size_by_comm[top_comms[i]]
-        sj = size_by_comm[top_comms[j]]
-        denom = (si * (si - 1) / 2) if (i == j and si > 1) else (si * sj)
-        matrix[i, j] = count / denom
-        matrix[j, i] = count / denom
-
-    labels = [f"C{c}\n(n={size_by_comm[c]})" for c in top_comms]
-    fig, ax = plt.subplots(figsize=(max(8, k * 0.7), max(7, k * 0.65)))
-    im = ax.imshow(matrix, cmap="YlOrRd", aspect="auto")
-    plt.colorbar(im, ax=ax, label="Edge density")
-
-    ax.set_xticks(range(k))
-    ax.set_xticklabels(labels, fontsize=8, rotation=45, ha="right")
-    ax.set_yticks(range(k))
-    ax.set_yticklabels(labels, fontsize=8)
-    ax.set_title(f"Inter-Community Edge Density (top-{k} communities)", fontsize=13)
-
-    for i in range(k):
-        for j in range(k):
-            val = matrix[i, j]
-            if val > 0:
-                ax.text(j, i, f"{val:.3f}", ha="center", va="center",
-                        fontsize=6,
-                        color="white" if val > matrix.max() * 0.6 else "black")
-
-    plt.tight_layout()
-    return _save(fig, filename)
-
-
-# ── 11. Baseline boxplots (degree & clustering across Real / BA / ER) ──────
-
-def plot_baseline_boxplots(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Graph, filename: str = "baseline_boxplots.png") -> str:
-    """
-    Side-by-side boxplots comparing degree distribution and local clustering
-    coefficient across the real Facebook graph, a Barabasi-Albert model, and
-    an Erdos-Renyi model.
-
-    Panels
-    ------
-    Left  — degree distribution per network
-    Right — local clustering coefficient per network
-
-    Parameters
-    ----------
-    G_real, G_ba, G_er : NetworkX graphs (undirected, unweighted).
-    filename            : Output PNG filename.
-    """
-    networks = [G_real, G_ba, G_er]
-    labels   = ["Real\n(Facebook)", "Barabasi-\nAlbert", "Erdos-\nRenyi"]
-    colors   = ["#4878CF", "#D65F5F", "#6ACC65"]
-
-    degree_data     = [[d for _, d in G.degree()]      for G in networks]
-    clustering_data = [list(nx.clustering(G).values()) for G in networks]
-
-    fig, axes = plt.subplots(1, 2, figsize=(13, 6))
-
-    for ax, data, title, ylabel in zip(
-        axes,
-        [degree_data, clustering_data],
-        ["Degree Distribution", "Local Clustering Coefficient"],
-        ["Degree", "Clustering coefficient"],
-    ):
-        bp = ax.boxplot(
-            data,
-            labels=labels,
-            patch_artist=True,
-            notch=True,
-            showfliers=True,
-            flierprops=dict(marker="o", markersize=2, alpha=0.4),
-            medianprops=dict(color="black", linewidth=2),
-            whiskerprops=dict(linewidth=1.2),
-            capprops=dict(linewidth=1.2),
-        )
-        for patch, color in zip(bp["boxes"], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.7)
-
-        # annotate median value next to each box
-        for i, d in enumerate(data):
-            med = float(np.median(d))
-            ax.text(i + 1, med, f" {med:.2f}",
-                    va="center", ha="left", fontsize=8, color="black")
-
-        ax.set_title(title, fontsize=13)
-        ax.set_ylabel(ylabel)
-        ax.yaxis.grid(True, linestyle="--", alpha=0.6)
-        ax.set_axisbelow(True)
-
-    fig.suptitle("Baseline Comparison — Real vs Synthetic Networks", fontsize=14, y=1.01)
-    plt.tight_layout()
-    return _save(fig, filename)
-
-
-# ── 12. Similarity / structural metrics table ──────────────────────────────
-
-def plot_similarity_table(G_real: nx.Graph, G_ba:   nx.Graph, G_er:   nx.Graph, filename: str = "similarity_table.png") -> str:
-    """
-    Render a formatted PNG table of structural similarity metrics comparing
-    the real Facebook graph against two synthetic baselines.
-
-    Metrics reported
-    ----------------
-    Nodes, Edges, Avg Degree, Density, Avg Clustering, Transitivity,
-    Diameter (LCC), Avg Shortest Path (sampled), Degree Assortativity,
-    Power-law gamma, Jaccard overlap of top-50 hubs (vs Real).
-
-    Parameters
-    ----------
-    G_real, G_ba, G_er : NetworkX graphs.
-    filename            : Output PNG filename.
-    """
-    from collections import Counter
-    import random
-
-    def _gamma(G):
-        deg_seq = [d for _, d in G.degree() if d > 0]
-        cnt     = Counter(deg_seq)
-        xs      = np.log10(np.array(sorted(cnt.keys()), dtype=float))
-        ys      = np.log10(np.array([cnt[k] for k in sorted(cnt.keys())],
-                                    dtype=float))
-        return round(float(-np.polyfit(xs, ys, 1)[0]), 3) if len(xs) >= 2 else float("nan")
-
-    def _avg_sp(G, k=500):
-        lcc  = max(nx.connected_components(G), key=len)
-        Gsub = G.subgraph(lcc)
-        if Gsub.number_of_nodes() <= 1:
-            return float("nan")
-        sample  = random.sample(list(Gsub.nodes()), min(k, Gsub.number_of_nodes()))
-        lengths = []
-        for src in sample:
-            lengths.extend(nx.single_source_shortest_path_length(Gsub, src).values())
-        return round(float(np.mean(lengths)), 4)
-
-    def _jaccard_hubs(G_ref, G_other, top=50):
-        hubs_ref   = set(sorted(G_ref.nodes(),   key=lambda n: G_ref.degree(n),   reverse=True)[:top])
-        hubs_other = set(sorted(G_other.nodes(), key=lambda n: G_other.degree(n), reverse=True)[:top])
-        inter = len(hubs_ref & hubs_other)
-        union = len(hubs_ref | hubs_other)
-        return round(inter / union, 4) if union else 0.0
-
-    def _stats(G):
-        n   = G.number_of_nodes()
-        m   = G.number_of_edges()
-        lcc = max(nx.connected_components(G), key=len)
-        return {
-            "Nodes":               n,
-            "Edges":               m,
-            "Avg Degree":          round(2 * m / n, 3) if n else 0,
-            "Density":             round(nx.density(G), 6),
-            "Avg Clustering":      round(nx.average_clustering(G), 4),
-            "Transitivity":        round(nx.transitivity(G), 4),
-            "Diameter (LCC)":      nx.diameter(G.subgraph(lcc)) if len(lcc) > 1 else 0,
-            "Avg Shortest Path":   _avg_sp(G),
-            "Assortativity":       round(nx.degree_assortativity_coefficient(G), 4),
-            "Power-law gamma":     _gamma(G),
-        }
-
-    sr, sb, se = _stats(G_real), _stats(G_ba), _stats(G_er)
-    metrics    = list(sr.keys()) + ["Jaccard Hub-50 (vs Real)"]
-    col_real   = [str(sr[m]) for m in sr] + ["—"]
-    col_ba     = [str(sb[m]) for m in sb] + [str(_jaccard_hubs(G_real, G_ba))]
-    col_er     = [str(se[m]) for m in se] + [str(_jaccard_hubs(G_real, G_er))]
-
-    n_rows = len(metrics)
-    fig, ax = plt.subplots(figsize=(11, 0.48 * n_rows + 1.6))
-    ax.axis("off")
-
-    table = ax.table(
-        cellText  = [[m, r, b, e] for m, r, b, e in zip(metrics, col_real, col_ba, col_er)],
-        colLabels = ["Metric", "Real (Facebook)", "Barabasi-Albert", "Erdos-Renyi"],
-        cellLoc   = "center",
-        loc       = "center",
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.65)
-
-    header_color = "#e8793a"
-    for col_idx in range(4):
-        cell = table[0, col_idx]
-        cell.set_facecolor(header_color)
-        cell.set_text_props(color="white", fontweight="bold")
-
-    row_colors = ["#f2f2f2", "#ffffff"]
-    for row_idx in range(1, n_rows + 1):
-        for col_idx in range(4):
-            cell = table[row_idx, col_idx]
-            cell.set_facecolor(row_colors[(row_idx - 1) % 2])
-            if col_idx == 0:
-                cell.set_text_props(fontweight="bold")
-
-    ax.set_title("Structural Similarity Metrics — Real vs Synthetic Networks", fontsize=13, pad=14)
-    plt.tight_layout()
-    return _save(fig, filename)
-
-
-# ── 13. Community Size Distribution (Power Law scatter) ───────────────────
-
-def plot_community_size_powerlaw(community_map: dict,
-                                 filename: str = "community_size_powerlaw.png") -> str:
-    """
-    Rank-size (Zipf) scatter plot for community sizes on log-log axes.
-
-    The Facebook graph produces ~13 communities with unique sizes, so a
-    frequency histogram (size vs count) collapses to a row of y=1 points.
-    The rank-size plot is the correct power-law check: rank communities
-    from largest (rank 1) to smallest and plot size on the y-axis.  A
-    straight line on the log-log scale indicates a power law.
-
-    Parameters
-    ----------
-    community_map : dict  node -> community_id.
-    filename      : Output PNG filename.
-    """
+def plot_community_size_powerlaw(
+    community_map: dict,
+    filename: str = "community_size_powerlaw.png",
+) -> str:
     from collections import Counter
 
-    size_of_comm = Counter(community_map.values())          # comm_id -> size
     sizes_sorted = np.array(
-        sorted(size_of_comm.values(), reverse=True), dtype=float
+        sorted(Counter(community_map.values()).values(), reverse=True), dtype=float
     )
     ranks = np.arange(1, len(sizes_sorted) + 1, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(10, 6), facecolor="white")
-    ax.set_facecolor("white")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(ranks, sizes_sorted, color="#e8793a", s=80, zorder=5, label="Community size")
 
-    ax.scatter(ranks, sizes_sorted, color="#e8793a", s=80, zorder=5,
-               label="Community size")
-
-    # Power-law fit on log-log scale
     if len(ranks) >= 3:
-        log_r  = np.log10(ranks)
-        log_s  = np.log10(sizes_sorted)
-        coeffs = np.polyfit(log_r, log_s, 1)
-        fit_s  = 10 ** np.polyval(coeffs, log_r)
+        coeffs = np.polyfit(np.log10(ranks), np.log10(sizes_sorted), 1)
+        fit_s  = 10 ** np.polyval(coeffs, np.log10(ranks))
         ax.plot(ranks, fit_s, "--", color="#e8793a", alpha=0.55, linewidth=1.5,
                 label=f"Power-law fit (slope ≈ {coeffs[0]:.2f})")
 
+    last_lr, last_ls = None, None
+    for r, s in zip(ranks, sizes_sorted):
+        lr = np.log10(r)
+        ls = np.log10(s) if s > 0 else 0
+        if last_lr is None or (abs(lr - last_lr) >= 0.20 and abs(ls - last_ls) >= 0.15):
+            ax.text(r, s * 1.18, f"{int(s)}", ha="center", va="bottom",
+                    fontsize=7, color="#222222")
+            last_lr, last_ls = lr, ls
+
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_title("Community Size Distribution: Power Law",
-                 fontsize=14, color="#222222", pad=12)
-    ax.set_xlabel("Rank (largest → smallest)", color="#222222")
-    ax.set_ylabel("Community Size", color="#222222", labelpad=8)
-    ax.tick_params(colors="#222222", which="both")
-    for spine in ax.spines.values():
-        spine.set_color("#cccccc")
-    ax.grid(True, linestyle="--", alpha=0.5, color="#e0e0e0", which="both")
+    ax.set_title("Community Size Distribution — Power Law")
+    ax.set_xlabel("Rank (largest → smallest)")
+    ax.set_ylabel("Community Size")
+    ax.grid(True, linestyle="--", alpha=0.4, which="both")
+    ax.legend(fontsize=9)
 
-    # Annotate each point with its size
-    for r, s in zip(ranks, sizes_sorted):
-        ax.text(r, s * 1.12, f"{int(s)}", ha="center", va="bottom",
-                fontsize=7.5, color="#222222", alpha=0.8)
-
-    leg = ax.legend(fontsize=9, facecolor="white",
-                    labelcolor="#222222", edgecolor="#cccccc")
-    plt.tight_layout()
     return _save(fig, filename)
 
 
-# ── 14. Modularity Curve Analysis ─────────────────────────────────────────
+def plot_baseline_boxplots(
+    G_real: nx.Graph,
+    G_ba: nx.Graph,
+    G_er: nx.Graph,
+    filename: str = "baseline.png",
+) -> str:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-def plot_modularity_curve(G: nx.Graph,
-                          filename: str = "modularity_curve.png",
-                          n_points: int = 12) -> str:
-    """
-    Plot modularity Q vs number of communities for the Facebook network by
-    running greedy modularity communities at varying resolution values.
-
-    Parameters
-    ----------
-    G         : NetworkX graph.
-    filename  : Output PNG filename.
-    n_points  : Number of resolution values to sweep.
-    """
-    from networkx.algorithms.community import greedy_modularity_communities, modularity
-
-    resolutions = np.linspace(0.05, 4.0, n_points)
-    results: list[tuple[int, float]] = []
-
-    for res in resolutions:
-        try:
-            comms = list(greedy_modularity_communities(G, resolution=res))
-            mod   = modularity(G, comms)
-            results.append((len(comms), mod))
-        except Exception:
-            continue
-
-    if not results:
-        print("  [WARN] plot_modularity_curve: no data points computed, skipping.")
-        return ""
-
-    # Sort by number of communities for a clean line
-    results.sort(key=lambda x: x[0])
-    x_vals = [r[0] for r in results]
-    y_vals = [r[1] for r in results]
-
-    fig, ax = plt.subplots(figsize=(10, 6), facecolor="white")
-    ax.set_facecolor("white")
-
-    ax.fill_between(x_vals, y_vals, alpha=0.30, color="#e8793a")
-    ax.plot(x_vals, y_vals, color="#e8793a", linewidth=2.5)
-
-    ax.set_title("Modularity Curve Analysis: Facebook Network",
-                 fontsize=14, color="#222222", pad=12)
-    ax.set_xlabel("Number of Communities", color="#222222")
-    ax.set_ylabel("Modularity Q", color="#222222", labelpad=8)
-    ax.tick_params(colors="#222222")
-    for spine in ax.spines.values():
-        spine.set_color("#cccccc")
-    ax.grid(True, linestyle="--", alpha=0.5, color="#e0e0e0")
-    ax.yaxis.set_label_position("right")
-    ax.yaxis.tick_right()
-
-    plt.tight_layout()
-    return _save(fig, filename)
-
-
-# ── 15. Formula Sheet ─────────────────────────────────────────────────────
-
-def plot_formula_sheet(filename: str = "formula_sheet.png") -> str:
-    """
-    Render all mathematical formulas used in the pipeline as a single
-    report-ready figure grouped by analysis phase.
-
-    Sections
-    --------
-    1  Graph Fundamentals
-    2  Centrality Measures
-    3  Community Detection (Greedy Modularity)
-    4  Ego Network Metrics
-    5  Synthetic Network Models
-    6  Information Diffusion (Independent Cascade)
-    7  Power-Law Degree Distribution
-    """
-    # ── section definitions ──────────────────────────────────────────────────
-    # Each entry: (display label, LaTeX formula string, plain-text description)
-    sections = [
-        ("1. Graph Fundamentals", [
-            (r"Average Degree",
-             r"$\langle k \rangle = \dfrac{2m}{n}$",
-             "m = edges, n = nodes"),
-            (r"Graph Density",
-             r"$\rho = \dfrac{2m}{n(n-1)}$",
-             "fraction of possible edges present"),
-            (r"Local Clustering Coefficient",
-             r"$C_v = \dfrac{2\,t_v}{k_v(k_v - 1)}$",
-             r"$t_v$ = triangles through v,  $k_v$ = degree of v"),
-            (r"Average Clustering",
-             r"$\bar{C} = \dfrac{1}{n}\sum_{v} C_v$",
-             "mean over all nodes"),
-            (r"Transitivity (Global Clustering)",
-             r"$T = \dfrac{3 \times \text{triangles}}{\text{connected triples}}$",
-             "ratio of closed to open triplets"),
-        ]),
-        ("2. Centrality Measures", [
-            (r"Degree Centrality",
-             r"$C_D(v) = \dfrac{k_v}{n - 1}$",
-             "normalised degree"),
-            (r"Betweenness Centrality",
-             r"$C_B(v) = \sum_{s \neq v \neq t} \dfrac{\sigma_{st}(v)}{\sigma_{st}}$",
-             r"$\sigma_{st}$ = shortest paths s$\to$t;  $\sigma_{st}(v)$ = those through v"),
-            (r"Closeness Centrality",
-             r"$C_C(v) = \dfrac{n - 1}{\sum_{u \neq v} d(v,\, u)}$",
-             "d(v, u) = shortest-path distance"),
-            (r"Eigenvector Centrality",
-             r"$x_v = \dfrac{1}{\lambda}\sum_{u \in \mathcal{N}(v)} x_u$",
-             r"$\lambda$ = largest eigenvalue of adjacency matrix"),
-        ]),
-        ("3. Community Detection — Greedy Modularity", [
-            (r"Modularity Q",
-             r"$Q = \dfrac{1}{2m}\sum_{ij}\!\left[A_{ij} - \dfrac{k_i k_j}{2m}\right]\delta(c_i, c_j)$",
-             r"$A_{ij}$ = adjacency;  $k_i,k_j$ = degrees;  $\delta$ = 1 if same community"),
-            (r"Resolution-parameterised Q",
-             r"$Q_\gamma = \dfrac{1}{2m}\sum_{ij}\!\left[A_{ij} - \gamma\dfrac{k_i k_j}{2m}\right]\delta(c_i, c_j)$",
-             r"$\gamma > 1$ favours smaller communities;  $\gamma < 1$ favours larger ones"),
-        ]),
-        ("4. Ego Network Metrics", [
-            (r"Effective Size (Burt 1992)",
-             r"$ES = n_a - \dfrac{\sum_{j \in A} k_j^{(A)}}{n_a}$",
-             r"$n_a$ = alters;  $k_j^{(A)}$ = degree of alter j within alter subgraph"),
-            (r"Efficiency",
-             r"$e = \dfrac{ES}{n_a}$",
-             "normalised effective size; ranges in (0, 1]"),
-            (r"Ego Network Density",
-             r"$\rho_{\mathrm{ego}} = \dfrac{2\,m_{\mathrm{ego}}}{n_{\mathrm{ego}}(n_{\mathrm{ego}}-1)}$",
-             "density within the 1-hop ego subgraph"),
-        ]),
-        ("5. Synthetic Network Models", [
-            (r"Barabasi-Albert — Preferential Attachment",
-             r"$\Pi(k_i) = \dfrac{k_i}{\sum_j k_j}$",
-             "probability a new node attaches to node i"),
-            (r"Erdos-Renyi — Random Graph",
-             r"$P(\mathrm{edge}) = p, \quad \mathbb{E}[m] = p\,\dfrac{n(n-1)}{2}$",
-             "each pair connected independently with probability p"),
-            (r"ER Degree Distribution",
-             r"$P(k) = \binom{n-1}{k} p^k (1-p)^{n-1-k}$",
-             "binomial; approximates Poisson for large n"),
-        ]),
-        ("6. Independent Cascade Diffusion", [
-            (r"Activation Probability",
-             r"$P(v \to u) = p$",
-             "newly activated v independently tries each inactive neighbour u"),
-            (r"Spread Fraction at Step t",
-             r"$f_t = \dfrac{|\mathcal{A}_t|}{n}$",
-             r"$\mathcal{A}_t$ = set of all activated nodes after step t"),
-        ]),
-        ("7. Power-Law Degree Distribution", [
-            (r"Power-Law (Scale-Free)",
-             r"$P(k) \propto k^{-\gamma}$",
-             r"$\gamma$ = scaling exponent (typically 2–3 for social networks)"),
-            (r"Log-Log Linear Fit",
-             r"$\log P(k) = -\gamma \log k + c$",
-             "straight line on log-log axes confirms power law"),
-            (r"Rank-Size (Zipf) Law",
-             r"$S_r \propto r^{-\alpha}$",
-             r"$S_r$ = community size at rank r;  straight line on log-log axes"),
-        ]),
+    data = [
+        _degree_sequence(G_real),
+        _degree_sequence(G_ba),
+        _degree_sequence(G_er),
     ]
+    axes[0].boxplot(data)
+    axes[0].set_title("Degree")
 
-    # ── layout ───────────────────────────────────────────────────────────────
-    total_formula_rows = sum(len(items) for _, items in sections)
-    total_section_hdrs = len(sections)
-    # Each formula row is 1 unit; each section header costs 2 units; title = 2 units
-    UNITS    = total_formula_rows + total_section_hdrs * 2 + 2
-    ROW_IN   = 0.38          # inches per unit
-    fig_h    = max(16, UNITS * ROW_IN + 1.0)
-
-    fig, ax = plt.subplots(figsize=(18, fig_h), facecolor="white")
-    ax.set_facecolor("white")
-    ax.axis("off")
-
-    # coordinate system: y runs from 0 (bottom) to UNITS (top)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, UNITS)
-
-    # column x-positions (figure fractions)
-    X_LABEL   = 0.01
-    X_FORMULA = 0.30
-    X_NOTE    = 0.65
-    COL_HDR_Y = UNITS - 0.8
-
-    # ── main title ────────────────────────────────────────────────────────────
-    ax.text(0.5, UNITS - 0.25,
-            "Mathematical Formulas — Facebook Ego-Network Analysis",
-            ha="center", va="center", fontsize=16, color="#222222",
-            fontweight="bold")
-
-    # ── column headers ────────────────────────────────────────────────────────
-    for x, lbl in [(X_LABEL, "Name"), (X_FORMULA, "Formula"), (X_NOTE, "Notes")]:
-        ax.text(x, COL_HDR_Y, lbl,
-                ha="left", va="center", fontsize=11,
-                color="#e8793a", fontweight="bold")
-
-    # divider under column headers
-    ax.axhline(COL_HDR_Y - 0.45, xmin=0.0, xmax=1.0,
-               color="#e8793a", linewidth=1.2, alpha=0.7)
-
-    y_cursor = COL_HDR_Y - 1.1   # start below the header divider
-
-    row_colors = ["#f7f7f7", "white"]   # alternating row background
-
-    for sec_idx, (sec_title, items) in enumerate(sections):
-        # ── section header ────────────────────────────────────────────────────
-        sec_bg = matplotlib.patches.FancyBboxPatch(
-            (0.0, y_cursor - 0.35), 1.0, 0.80,
-            boxstyle="square,pad=0",
-            linewidth=0, facecolor="#fff4ec",
-            zorder=0,
-        )
-        ax.add_patch(sec_bg)
-        ax.text(X_LABEL + 0.005, y_cursor + 0.05, sec_title,
-                ha="left", va="center", fontsize=12,
-                color="#c0550a", fontweight="bold")
-        y_cursor -= 1.2
-
-        for row_idx, (label, formula, note) in enumerate(items):
-            # alternating row stripe
-            stripe = matplotlib.patches.FancyBboxPatch(
-                (0.0, y_cursor - 0.45), 1.0, 0.92,
-                boxstyle="square,pad=0",
-                linewidth=0, facecolor=row_colors[row_idx % 2],
-                zorder=0,
-            )
-            ax.add_patch(stripe)
-
-            ax.text(X_LABEL + 0.005, y_cursor, label,
-                    ha="left", va="center", fontsize=10,
-                    color="#444444", style="italic")
-            ax.text(X_FORMULA, y_cursor, formula,
-                    ha="left", va="center", fontsize=12,
-                    color="#111111")
-            ax.text(X_NOTE, y_cursor, note,
-                    ha="left", va="center", fontsize=9.5,
-                    color="#555555")
-
-            y_cursor -= 1.0
-
-        y_cursor -= 0.4   # extra gap between sections
-
-    plt.tight_layout(pad=0.3)
     return _save(fig, filename)

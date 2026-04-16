@@ -1,14 +1,3 @@
-"""
-graph_builder.py
-Builds the NetworkX graph from a clean edge-list DataFrame.
-
-Graph Schema
-------------
-Type       : nx.Graph (undirected, unweighted)
-Nodes      : Facebook user IDs (int)
-Edges      : Friendship connections
-Node attrs : degree (int)
-"""
 import sys
 import os
 import networkx as nx

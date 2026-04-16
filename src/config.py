@@ -1,7 +1,3 @@
-"""
-config.py
-All project-wide paths and constants in one place.
-"""
 import os
 
 BASE_DIR       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

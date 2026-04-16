@@ -2,7 +2,6 @@ import networkx as nx
 import random
 
 def independent_cascade(G, seeds, p=0.1, max_steps=100):
-    """Simulate independent cascade diffusion model"""
     activated = set(seeds)
     newly_activated = set(seeds)
     
